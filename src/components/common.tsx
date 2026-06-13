@@ -1,0 +1,239 @@
+import { ReactNode } from 'react';
+import { Share2 } from 'lucide-react';
+import { cls } from '../utils/format';
+import { shareToX, X_PROFILE } from '../utils/share';
+
+export function Page({
+  title, subtitle, actions, children,
+}: {
+  title: string;
+  subtitle?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 items-end justify-between gap-4 px-6 py-5">
+        <div>
+          <h2 className="text-2xl font-semibold tracking-tight text-white">{title}</h2>
+          {subtitle && (
+            <p className="mt-1 text-sm text-krypt-muted">{subtitle}</p>
+          )}
+        </div>
+        {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      </div>
+      <div className="flex-1 overflow-y-auto px-6 pb-8">{children}</div>
+    </div>
+  );
+}
+
+export function Card({
+  className, children, header, footer,
+}: {
+  className?: string;
+  children: ReactNode;
+  header?: ReactNode;
+  footer?: ReactNode;
+}) {
+  return (
+    <div className={cls('krypt-card', className)}>
+      {header && (
+        <div className="-mx-5 -mt-5 mb-4 border-b border-krypt-border bg-krypt-surface2/60 px-5 py-3">
+          {header}
+        </div>
+      )}
+      {children}
+      {footer && (
+        <div className="-mx-5 -mb-5 mt-4 border-t border-krypt-border bg-krypt-surface2/60 px-5 py-3">
+          {footer}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function StatCard({
+  label, value, hint, accent, className,
+}: {
+  label: string;
+  value: ReactNode;
+  hint?: ReactNode;
+  accent?: 'good' | 'bad' | 'warn' | 'neutral';
+  className?: string;
+}) {
+  const ring =
+    accent === 'good' ? 'ring-1 ring-krypt-win/30' :
+    accent === 'bad' ? 'ring-1 ring-krypt-loss/30' :
+    accent === 'warn' ? 'ring-1 ring-krypt-warn/30' :
+    '';
+  return (
+    <div className={cls('krypt-card', ring, className)}>
+      <div className="text-[11px] uppercase tracking-wider text-krypt-muted">{label}</div>
+      <div className="mt-1 font-mono text-2xl font-medium text-white">{value}</div>
+      {hint && <div className="mt-1 text-xs text-krypt-dim">{hint}</div>}
+    </div>
+  );
+}
+
+export function ShareableStat({
+  label, value, hint, accent, className, shareText,
+}: {
+  label: string;
+  value: ReactNode;
+  hint?: ReactNode;
+  accent?: 'good' | 'bad' | 'warn' | 'neutral';
+  className?: string;
+  shareText: string;
+}) {
+  return (
+    <div className={cls('relative', className)}>
+      <StatCard label={label} value={value} hint={hint} accent={accent} />
+      <ShareButton text={shareText} className="absolute right-3 top-3" />
+    </div>
+  );
+}
+
+export function ShareButton({
+  text, className, size = 'sm',
+}: {
+  text: string;
+  className?: string;
+  size?: 'sm' | 'xs';
+}) {
+  const sz = size === 'xs' ? 'h-6 w-6' : 'h-7 w-7';
+  const ic = size === 'xs' ? 'h-3 w-3' : 'h-3.5 w-3.5';
+  return (
+    <button
+      onClick={() => void shareToX(text)}
+      title={`Share to ${X_PROFILE}`}
+      className={cls(
+        'grid place-items-center rounded-md border border-krypt-border bg-krypt-surface2 text-krypt-muted transition-colors hover:border-krypt-purple/40 hover:bg-krypt-purple/10 hover:text-white',
+        sz,
+        className,
+      )}
+    >
+      <Share2 className={ic} />
+    </button>
+  );
+}
+
+export function Empty({
+  title, description, action,
+}: { title: string; description?: string; action?: ReactNode }) {
+  return (
+    <div className="grid place-items-center rounded-xl border border-dashed border-krypt-border p-10 text-center">
+      <div>
+        <div className="text-base font-medium text-white">{title}</div>
+        {description && <p className="mt-1 max-w-md text-sm text-krypt-muted">{description}</p>}
+        {action && <div className="mt-4">{action}</div>}
+      </div>
+    </div>
+  );
+}
+
+export function Switch({
+  checked, onChange, label, description, disabled,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label?: string;
+  description?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cls(
+        'flex w-full items-start justify-between gap-4 rounded-lg border border-krypt-border bg-krypt-surface2 p-3 text-left transition-colors hover:border-krypt-borderHi',
+        disabled && 'opacity-50',
+      )}
+    >
+      <div className="flex-1">
+        {label && <div className="text-sm text-white">{label}</div>}
+        {description && (
+          <div className="mt-0.5 text-xs text-krypt-muted">{description}</div>
+        )}
+      </div>
+      <div
+        className={cls(
+          'relative h-5 w-9 shrink-0 rounded-full transition-colors',
+          checked ? 'bg-krypt-glow' : 'bg-krypt-border',
+        )}
+      >
+        <div
+          className={cls(
+            'absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all',
+            checked ? 'left-4' : 'left-0.5',
+          )}
+        />
+      </div>
+    </button>
+  );
+}
+
+export function NumberInput({
+  value, onChange, min, max, step, suffix, prefix, disabled,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  suffix?: string;
+  prefix?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className={cls('relative', disabled && 'opacity-50')}>
+      {prefix && (
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-krypt-dim">
+          {prefix}
+        </span>
+      )}
+      <input
+        type="number"
+        value={Number.isFinite(value) ? value : 0}
+        min={min}
+        max={max}
+        step={step}
+        disabled={disabled}
+        onChange={(e) => {
+          const n = parseFloat(e.target.value);
+          if (Number.isFinite(n)) onChange(n);
+        }}
+        className={cls(
+          'krypt-input font-mono',
+          prefix && 'pl-7',
+          suffix && 'pr-12',
+          disabled && 'cursor-not-allowed',
+        )}
+      />
+      {suffix && (
+        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-krypt-dim">
+          {suffix}
+        </span>
+      )}
+    </div>
+  );
+}
+
+export function Section({
+  title, description, children,
+}: { title: string; description?: string; children: ReactNode }) {
+  return (
+    <div className="mb-6">
+      <div className="mb-3 flex items-baseline justify-between">
+        <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-krypt-muted">
+          {title}
+        </h3>
+        {description && (
+          <p className="ml-4 max-w-md text-right text-xs text-krypt-dim">{description}</p>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}

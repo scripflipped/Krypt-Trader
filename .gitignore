@@ -1,0 +1,50 @@
+# ── Dependencies ──────────────────────────────────────────────────
+node_modules/
+
+# ── Build / packaging output ──────────────────────────────────────
+dist/
+dist-electron/
+release/
+python/dist/
+python/build/
+*.spec
+
+# ── Python ────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# ── Local runtime state — NEVER COMMIT (may hold credentials / trades)
+# The backend falls back to ./credentials, ./data, ./logs next to the
+# Python files when KRYPT_TRADER_USERDATA is unset (dev runs).
+credentials/
+python/data/
+python/logs/
+*.db
+*.db-wal
+*.db-shm
+
+# ── Secrets / local env ───────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Logs ──────────────────────────────────────────────────────────
+*.log
+
+# ── OS / editor cruft ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.tmp
+.idea/
+
+# ── Internal docs — kept locally, NOT for the public repo ─────────
+# (marketing strategy, internal SWOT, AI scratchpad — contain private
+# handles / business notes / references to a private sibling project)
+AI_CONTEXT.md
+MARKETING.md
+PROS_AND_CONS.md
+
+# Local-only simulation / animation-testing copy of the app (NEVER pushed to git)
+simulation/
