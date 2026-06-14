@@ -14,6 +14,10 @@ process.env.VITE_PUBLIC = app.isPackaged
   ? process.env.DIST
   : join(__dirname, '..', 'public');
 
+if (process.platform === 'win32') {
+  app.setAppUserModelId('cc.krypt.trader');
+}
+
 let mainWindow: BrowserWindow | null = null;
 
 function iconPath(): string {
@@ -24,6 +28,7 @@ function iconPath(): string {
     app.isPackaged
       ? join(process.resourcesPath, 'krypt.ico')
       : join(process.cwd(), 'resources', 'krypt.ico'),
+    join(__dirname, '..', 'resources', 'krypt.ico'),
   ];
   for (const c of candidates) {
     if (existsSync(c)) return c;

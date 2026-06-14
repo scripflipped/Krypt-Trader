@@ -1,3 +1,10 @@
+"""Golden tests for the whale + momentum scoring functions.
+
+These two functions are the heart of the scanner ("calibrated on 22k+
+resolved Kalshi whale trades"). They're pure, so we pin their output for
+a handful of hand-computed inputs. If a refactor shifts a score, these
+break loudly instead of silently changing what the bot trades.
+"""
 from __future__ import annotations
 
 import scanner

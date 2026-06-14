@@ -1,3 +1,22 @@
+"""15-minute crypto market monitor (READ-ONLY).
+
+Powers the "15m Crypto" tab. Tracks Kalshi's seven 15-minute crypto
+series and surfaces a momentum entry *signal* for each: in the last
+`time_delay` minutes of a quarter, when one side is a strong favorite
+(>= entry threshold) and the underlying has moved at least
+`min_delta_pct` from the quarter's opening spot price.
+
+This module NEVER places, modifies, or cancels an order — it only reads
+public Kalshi market data and a public crypto spot feed. The spot price
+(needed to compute delta) comes from CoinGecko because Kalshi's API only
+exposes contract probabilities, not the live underlying price.
+
+Every threshold is user-configurable from the 15m Crypto tab and
+overridable via `crypto15m_*` config keys. The shipped defaults
+(8-minute window, 85c favorite, 40c stop, 0.02 markup) are just one
+common favorite-follow baseline — treat them as a starting point, not a
+proven edge.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -81,6 +100,9 @@ def _to_float(v) -> float:
 
 
 def _price_dollars(m: dict, key: str) -> float:
+    """Kalshi ships both integer-cents (`yes_bid`) and dollar
+    (`yes_bid_dollars`) fields for prices; prefer the dollar form and
+    fall back to cents/100."""
     d = m.get(f"{key}_dollars")
     if d is not None:
         return _to_float(d)
@@ -102,6 +124,7 @@ def _parse_close_epoch(close_time: str) -> Optional[float]:
 
 
 async def _spots_cryptocompare(client: httpx.AsyncClient) -> dict[str, float]:
+    """One call covers every tracked asset (incl. HYPE/BNB)."""
     syms = ",".join(s["asset"] for s in SERIES)
     resp = await client.get(_CRYPTOCOMPARE_URL, params={"fsyms": syms, "tsyms": "USD"})
     resp.raise_for_status()
@@ -117,6 +140,7 @@ async def _spots_cryptocompare(client: httpx.AsyncClient) -> dict[str, float]:
 
 
 async def _spots_coinbase(client: httpx.AsyncClient) -> dict[str, float]:
+    """Per-asset spot fallback. Coinbase now lists every tracked coin."""
     async def one(s: dict) -> tuple[str, Optional[float]]:
         try:
             r = await client.get(_COINBASE_URL.format(sym=s["asset"]))
@@ -131,6 +155,7 @@ async def _spots_coinbase(client: httpx.AsyncClient) -> dict[str, float]:
 
 
 async def _spots_coingecko(client: httpx.AsyncClient) -> dict[str, float]:
+    """Original source, now last-resort (free tier rate-limits hard)."""
     ids = ",".join(s["cg"] for s in SERIES)
     resp = await client.get(_COINGECKO_URL, params={"ids": ids, "vs_currencies": "usd"})
     resp.raise_for_status()
@@ -151,6 +176,13 @@ _SPOT_SOURCES = [
 
 
 async def fetch_spots() -> tuple[dict[str, float], str]:
+    """Every tracked asset's USD spot, with the source that supplied it.
+
+    Returns ``({asset: usd}, source)``. Tries each feed in turn and caches
+    the first non-empty result for `_SPOT_CACHE_TTL` seconds so the three
+    callers (monitor, executor, recorder) share one upstream request. If
+    every feed fails it serves the last good cache (marked "(stale)") so
+    Spot/Open/Δ don't all blank out during a transient outage."""
     loop = asyncio.get_event_loop()
     now = loop.time()
     if _spot_cache["spots"] and (now - _spot_cache["at"]) < _SPOT_CACHE_TTL:
@@ -184,6 +216,10 @@ def _blank_asset(entry: dict, spot: Optional[float], error: Optional[str] = None
 
 
 def hours_ok(cfg: dict, hour: Optional[int] = None) -> bool:
+    """Is the (UTC) hour inside the configured trading window?
+
+    [start, end) in UTC hours; start == end (or the full 0..24) means
+    always-on; start > end wraps overnight (e.g. 22 -> 6)."""
     try:
         start = int(cfg.get("crypto15m_hours_start_utc", 0) or 0)
         end = int(cfg.get("crypto15m_hours_end_utc", 24) or 24)
@@ -200,6 +236,11 @@ def hours_ok(cfg: dict, hour: Optional[int] = None) -> bool:
 
 
 def _track_window_open(asset: str, window_start: int, spot: Optional[float]) -> Optional[float]:
+    """Record (once) the spot at the start of a 15-min window; return it.
+
+    The open is captured on the first snapshot we take during a window,
+    so if the app starts mid-window the open is approximate for that one
+    window and exact thereafter."""
     if spot is None:
         return None
     key = (asset, window_start)
@@ -277,6 +318,9 @@ async def _asset_snapshot(entry: dict, spot: Optional[float], cfg: dict, now_epo
 
 
 async def snapshot(cfg: dict) -> dict:
+    """Build the full monitor snapshot for all seven series. Resilient:
+    a failure on the spot feed or any single series degrades that field
+    rather than failing the whole call."""
     now_epoch = datetime.now(timezone.utc).timestamp()
     try:
         spots, spot_source = await fetch_spots()

@@ -1,3 +1,10 @@
+"""Tests for the 15-min crypto executor (crypto15m_trader.py).
+
+Pure decision helpers, plus a paper-mode lifecycle driven against a real
+temp SQLite with `crypto15m.snapshot` and `kalshi_api.fetch_market`
+stubbed (no network, no orders). Paper mode exercises the exact same
+decision path as live — only fills are simulated.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -458,6 +465,9 @@ _c15_seq = 0
 
 
 def _seed_c15(**over) -> dict:
+    """Insert one crypto15m position row directly, return the fetched dict.
+    insert_crypto15m_position can't write the exit_* columns, so those are
+    applied via a follow-up update."""
     global _c15_seq
     _c15_seq += 1
     n = _c15_seq

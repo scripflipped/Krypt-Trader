@@ -92,14 +92,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     try {
       const s = await window.krypt.state.get();
       setState(s);
-    } catch { }
+    } catch {   }
   };
 
   const refreshAccount = async (): Promise<void> => {
     try {
       const a = await window.krypt.data.account();
       setAccount(a);
-    } catch { }
+    } catch {   }
   };
 
   const refreshPositions = async (): Promise<void> => {
@@ -109,7 +109,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       for (const r of rows) map.set(r.id, r);
       positionsByIdRef.current = map;
       flushPositions();
-    } catch { }
+    } catch {   }
   };
 
   const refreshSignals = async (): Promise<void> => {
@@ -119,14 +119,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       for (const r of rows) map.set(`${r.source}:${r.id}`, r);
       signalsByKeyRef.current = map;
       flushSignals();
-    } catch { }
+    } catch {   }
   };
 
   const refreshScannerStats = async (): Promise<void> => {
     try {
       const s = await window.krypt.data.scannerStats();
       setScannerStats(s);
-    } catch { }
+    } catch {   }
   };
 
   const refreshCredentials = async (): Promise<void> => {
@@ -137,14 +137,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       ]);
       setCredentials(c);
       setCredentialsAll(all);
-    } catch { }
+    } catch {   }
   };
 
   const refreshBackend = async (): Promise<void> => {
     try {
       const b = await window.krypt.backend.info();
       setBackend(b);
-    } catch { }
+    } catch {   }
   };
 
   useEffect(() => {

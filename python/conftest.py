@@ -1,3 +1,12 @@
+"""Pytest bootstrap for the Krypt Trader backend.
+
+The backend modules use top-level imports (`import db`, `import trader`,
+…) and expect to run with the `python/` directory on `sys.path`. This
+conftest lives in `python/` so pytest puts that directory on the path
+for us, and it redirects all on-disk state (the SQLite DB, the rotating
+log files, credential files) into a throwaway temp directory so the
+suite never touches the user's real `<userData>` tree.
+"""
 from __future__ import annotations
 
 import os

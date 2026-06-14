@@ -1,3 +1,18 @@
+"""DB-backed integration tests for the trading engine.
+
+These exercise the three functions where the nastiest historical bugs
+lived (per trader.py's comments): order placement + the entry gates
+(`execute_signal`), the reconcile/poll state machine (`poll_open_orders`),
+and settlement P&L (`mark_resolved_positions`).
+
+Strategy:
+  - Real `db` module against a fresh temp SQLite file per test (so the
+    actual schema + queries are under test, not a mock of them).
+  - Every Kalshi network call is stubbed. trader.py imports these names
+    into its own module namespace (`from kalshi_api import place_limit_order`),
+    so the stubs are installed on the `trader` module, not on `kalshi_api`.
+  - The engine functions are async; we drive them with `asyncio.run`.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +30,7 @@ from kalshi_api import KalshiAPIError
 
 @pytest.fixture
 def fresh_db(tmp_path, monkeypatch):
+    """Point db.get_db() at a brand-new SQLite file and create the schema."""
     dbfile = tmp_path / "krypt-test.db"
     monkeypatch.setattr(db, "db_path", lambda: dbfile)
     db.init_db()
@@ -23,6 +39,7 @@ def fresh_db(tmp_path, monkeypatch):
 
 @pytest.fixture
 def env_demo(monkeypatch):
+    """Pin the engine's notion of the active Kalshi env to 'demo'."""
     monkeypatch.setattr(trader, "get_env", lambda: "demo")
     return "demo"
 
@@ -42,6 +59,11 @@ _ids = itertools.count(1)
 
 
 def seed_position(**over) -> int:
+    """Insert one bot_positions row with sane, unique defaults.
+
+    Pass `created_at_offset_sec` (negative for the past) to backdate the
+    row's created_at after insert.
+    """
     n = next(_ids)
     row = {
         "signal_source": over.get("signal_source", "whale"),

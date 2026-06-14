@@ -1,3 +1,9 @@
+"""Tests for the public Kalshi browser-URL builder (positions / history links).
+
+The deep-link shape was reverse-engineered from a real URL:
+  kalshi.com/markets/kxbtcd/bitcoin-price-abovebelow/kxbtcd-26jun1302
+i.e. /markets/{series}/{slugify(series.title)}/{event}, all lowercased.
+"""
 from __future__ import annotations
 
 import asyncio

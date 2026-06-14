@@ -21,7 +21,7 @@ export function DashboardPage({ onNav }: DashboardProps) {
       try {
         const s = await window.krypt.data.pnlSeries(168);
         if (mounted) setSeries(s);
-      } catch { }
+      } catch {   }
     };
     void load();
     const i = window.setInterval(load, 30000);

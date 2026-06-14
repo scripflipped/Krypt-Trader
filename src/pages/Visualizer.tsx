@@ -64,7 +64,7 @@ export function VisualizerPage() {
       try {
         const s = await window.krypt.data.pnlSeries(24);
         if (mounted) setSeries(s);
-      } catch { }
+      } catch {   }
     };
     void load();
     const i = window.setInterval(load, 30_000);
@@ -317,6 +317,7 @@ export function VisualizerPage() {
       }
     >
       <div className="grid gap-4 lg:grid-cols-[320px,1fr]">
+        { }
         <div className="space-y-3">
           <Card header={<div className="text-xs uppercase tracking-wider text-krypt-muted">Equity (session)</div>}>
             <div className="text-lg font-mono text-white">{fmtUsd(account?.totalUsd)}</div>
@@ -412,10 +413,12 @@ export function VisualizerPage() {
           </Card>
         </div>
 
+        { }
         <div className="flex flex-col gap-2">
           <div ref={wrapperRef} className="relative h-[calc(100vh-280px)] min-h-[440px] overflow-hidden rounded-2xl border border-krypt-border bg-krypt-void">
             <canvas ref={canvasRef} className="absolute inset-0" />
 
+            { }
             <div className="pointer-events-none absolute right-3 top-3 flex flex-col gap-1 rounded-lg border border-krypt-border bg-krypt-void/80 px-3 py-2 text-[11px] text-krypt-muted backdrop-blur">
               <LegendDot color="#A855F7" label="Whale signal" />
               <LegendDot color="#EC4899" label="Momentum signal" />
@@ -425,6 +428,7 @@ export function VisualizerPage() {
               <div className="mt-1 text-[10px] text-krypt-dim">orb size = potential profit</div>
             </div>
 
+            { }
             <div className="absolute left-3 top-3 flex items-center gap-2 rounded-lg border border-krypt-border bg-krypt-void/80 px-3 py-2 text-[11px] backdrop-blur">
               <Wallet className="h-3.5 w-3.5 text-krypt-purple" />
               <div>
@@ -451,6 +455,7 @@ export function VisualizerPage() {
             </div>
           </div>
 
+          { }
           <div className="grid grid-cols-2 gap-2">
             <BucketTile
               tone="good"
@@ -470,6 +475,7 @@ export function VisualizerPage() {
         </div>
       </div>
 
+      { }
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <Card header={<div className="text-xs uppercase tracking-wider text-krypt-muted"><Activity className="mr-1 inline h-3 w-3" />Latest signals</div>}>
           {signals.slice(0, 8).map((s) => (

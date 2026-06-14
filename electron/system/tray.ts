@@ -19,6 +19,8 @@ function iconPath(): string {
     app.isPackaged
       ? join(process.resourcesPath, 'krypt.ico')
       : join(process.cwd(), 'resources', 'krypt.ico'),
+    join(__dirname, '..', 'resources', 'krypt.ico'),
+    join(__dirname, '..', 'resources', 'krypt.png'),
     join(process.cwd(), 'resources', 'krypt.png'),
   ];
   for (const c of candidates) {

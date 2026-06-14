@@ -1,3 +1,15 @@
+"""Public + signed Kalshi API client.
+
+Public reads (markets, trades, orderbook, series) hit the production
+data endpoint regardless of the user's chosen demo/production env —
+demo doesn't have a usable trade feed for whale scanning, so we read
+public data from prod and only sign trade-API calls against the
+configured environment.
+
+Signed writes (orders, positions, balance) hit
+`https://demo-api.kalshi.co` or `https://api.elections.kalshi.com`
+based on `kalshi_auth.set_env()`.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -201,6 +213,12 @@ _WEB_HOSTS = {
 
 
 def _slugify(text: str) -> str:
+    """Reproduce Kalshi's series-title → URL-slug transform.
+
+    Verified against a live URL: the series title "Bitcoin price Above/below"
+    becomes "bitcoin-price-abovebelow" — lowercase, spaces collapse to '-',
+    every other non-alphanumeric is dropped (so "Above/below" → "abovebelow").
+    """
     s = (text or "").strip().lower()
     s = re.sub(r"\s+", "-", s)
     s = re.sub(r"[^a-z0-9-]", "", s)
@@ -209,6 +227,12 @@ def _slugify(text: str) -> str:
 
 
 def _event_from_ticker(ticker: str) -> str:
+    """Market ticker → event ticker (drop the trailing strike segment).
+
+    Kalshi markets are `{EVENT}-{STRIKE}` and events are `{SERIES}-{REST}`,
+    so the event is everything up to the last hyphen *iff* there are at
+    least three segments. A two-segment ticker is already an event ticker.
+    """
     parts = (ticker or "").split("-")
     if len(parts) >= 3:
         return "-".join(parts[:-1])
@@ -218,6 +242,16 @@ def _event_from_ticker(ticker: str) -> str:
 async def web_market_url(
     *, event_ticker: str = "", ticker: str = "", env: str = "production",
 ) -> str:
+    """Build the kalshi.com (or demo.kalshi.co) browser URL for a market.
+
+    Deep-links straight to the event when the series' URL slug resolves
+    (`/markets/{series}/{slug}/{event}`); otherwise it degrades to the
+    series page (`/markets/{series}`), which Kalshi redirects to its
+    canonical slug. Returns "" only when there's no ticker to work from.
+
+    Series metadata is read from the public (production) data API, so the
+    slug is identical regardless of env — only the host differs.
+    """
     event = (event_ticker or "").strip() or _event_from_ticker(ticker)
     base = event or (ticker or "").strip()
     if not base:
@@ -299,6 +333,14 @@ async def get_positions(
     limit: int = 200, *, settlement_status: str | None = None,
     paginate: bool = True,
 ) -> list[dict]:
+    """Fetch the user's market_positions from Kalshi.
+
+    Defaults to NO `settlement_status` filter so we get every position
+    Kalshi knows about (the API's default is "all"). The reconciler
+    then filters by non-zero qty client-side. If the user has more
+    than `limit` positions, we follow the response's `cursor` until
+    Kalshi stops sending one.
+    """
     out: list[dict] = []
     cursor: Optional[str] = None
     pages = 0
@@ -324,6 +366,8 @@ async def get_positions(
 
 
 async def get_settled_positions(limit: int = 200) -> list[dict]:
+    """Settled positions — used by the resolution reconciler to detect
+    markets that closed in our favour without a tracker DB hit."""
     try:
         data = await _signed_request(
             "GET",
@@ -342,6 +386,9 @@ async def get_order(order_id: str) -> dict:
 
 
 async def get_fills_for_order(order_id: str, limit: int = 200) -> list[dict]:
+    """List all fills for a single order — authoritative per-order count
+    and cost. Use this to recover from any over/under-counting in the
+    order/positions endpoints."""
     out: list[dict] = []
     cursor: Optional[str] = None
     pages = 0
@@ -365,6 +412,7 @@ async def get_fills_for_order(order_id: str, limit: int = 200) -> list[dict]:
 
 
 async def get_fills_since(after_ts_unix: int, limit: int = 200) -> list[dict]:
+    """All fills since a unix timestamp (paginated, max 5 pages)."""
     out: list[dict] = []
     cursor: Optional[str] = None
     pages = 0
@@ -389,6 +437,14 @@ async def get_fills_since(after_ts_unix: int, limit: int = 200) -> list[dict]:
 
 
 def _normalize_orderbook(raw: Any) -> dict:
+    """Normalize any Kalshi orderbook shape into integer-cents levels:
+        {'yes': [[cents:int, size:float], ...], 'no': [...]}
+
+    Kalshi's elections API returns the book under `orderbook_fp` with keys
+    `yes_dollars`/`no_dollars` and DOLLAR-string prices (e.g. "0.3800"),
+    while the legacy `orderbook` uses `yes`/`no` with integer cents. The
+    rest of the bot (`_best_cross_price_cents`) expects cents `yes`/`no`,
+    so normalize here — otherwise limit-cross pricing silently no-ops."""
     if not isinstance(raw, dict):
         return {"yes": [], "no": []}
     book = raw.get("orderbook") or raw.get("orderbook_fp") or raw
@@ -409,6 +465,8 @@ def _normalize_orderbook(raw: Any) -> dict:
 
 
 async def get_orderbook(ticker: str) -> dict:
+    """Authenticated orderbook (best-effort; falls back to public),
+    normalized to {'yes': [[cents, size], ...], 'no': [...]}."""
     try:
         book = _normalize_orderbook(await _signed_request("GET", f"/markets/{ticker}/orderbook"))
         if book["yes"] or book["no"]:

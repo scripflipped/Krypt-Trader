@@ -1,3 +1,32 @@
+"""Fee-aware signal backtest for Krypt Trader.
+
+Answers the only question that matters before hardening anything else:
+**do the scanner's signals have positive expectancy after Kalshi fees?**
+
+It replays every *resolved* signal the scanners recorded (`whale_trades`
+and `alerts`), computes the per-contract P&L of having followed it at the
+recorded entry price given the binary outcome, **subtracts an estimate of
+the Kalshi trading fee**, and reports net edge with a significance check
+and a confidence-threshold sweep.
+
+This is a realized-signal backtest, not an academic one: it measures the
+net-of-fee edge of the signals this bot actually produces. It does NOT
+prove forward performance (no look-ahead controls, the scoring is the
+same one that generated the signals), but it is the honest first cut at
+"does this make money after costs."
+
+    python backtest.py                 # auto-find your Krypt Trader DB
+    python backtest.py --db PATH       # explicit DB
+    python backtest.py --fee 0.07      # fee coefficient (see note below)
+    python backtest.py --demo          # synthetic data, to see the format
+
+FEE MODEL: Kalshi's general trading fee is approximately
+    fee = ceil(0.07 * C * P * (1 - P))   (per order, rounded up to a cent)
+We use the continuous per-contract form `fee_coeff * P * (1 - P)` (no
+per-order ceil). The 0.07 coefficient and the formula vary by market and
+have changed over time — **verify against Kalshi's current published fee
+schedule** and pass --fee to match.
+"""
 from __future__ import annotations
 
 import argparse
@@ -14,16 +43,23 @@ DEFAULT_FEE_COEFF = 0.07
 
 
 def kalshi_fee_per_contract(price: float, fee_coeff: float = DEFAULT_FEE_COEFF) -> float:
+    """Continuous per-contract Kalshi trading fee estimate at execution
+    price `price` (dollars, 0..1). Symmetric in P, so it's the same
+    whether you bought the YES or NO side at that price."""
     p = max(0.0, min(1.0, float(price)))
     return fee_coeff * p * (1.0 - p)
 
 
 def net_pnl_per_contract(cost: float, correct: bool, fee_coeff: float = DEFAULT_FEE_COEFF) -> float:
+    """Net P&L of one $1 binary contract bought at `cost` (the price paid
+    for the chosen side), settled at $1 if `correct` else $0, minus the
+    trading fee."""
     gross = (1.0 - cost) if correct else (-cost)
     return gross - kalshi_fee_per_contract(cost, fee_coeff)
 
 
 def signal_cost(row: dict, source: str) -> float:
+    """Price paid (0..1) for the side the signal points at."""
     price = float(row.get("price") or 0.0)
     if source == "whale":
         return max(0.0, min(1.0, price))
@@ -35,6 +71,12 @@ def signal_cost(row: dict, source: str) -> float:
 
 
 def summarize(signals: list[dict], fee_coeff: float = DEFAULT_FEE_COEFF) -> dict:
+    """Aggregate net-of-fee economics for a list of signals.
+
+    Each signal dict needs: cost (float), correct (bool), confidence (float).
+    `net_ev` is the headline: mean net P&L per contract. `t` is the
+    t-statistic (mean / standard error) — |t| < 2 ≈ indistinguishable
+    from zero (noise)."""
     n = len(signals)
     if n == 0:
         return {"n": 0, "wins": 0, "win_rate": 0.0, "gross_ev": 0.0,
@@ -72,6 +114,8 @@ def summarize(signals: list[dict], fee_coeff: float = DEFAULT_FEE_COEFF) -> dict
 def threshold_sweep(
     signals: list[dict], thresholds: list[float], fee_coeff: float = DEFAULT_FEE_COEFF
 ) -> list[dict]:
+    """Net economics when filtered to confidence >= each threshold —
+    shows whether the score actually selects for edge."""
     out = []
     for th in thresholds:
         sub = [s for s in signals if s["confidence"] >= th]
@@ -93,6 +137,10 @@ def _price_label(cost: float) -> str:
 
 
 def summarize_fade(signals: list[dict], fee_coeff: float = DEFAULT_FEE_COEFF) -> dict:
+    """What you'd net by betting the OPPOSITE side of each signal (cost
+    becomes 1-cost, win becomes loss). Approximate — ignores the bid/ask
+    spread you'd actually cross — but a strong tell for whether the
+    signal is anti-predictive."""
     faded = [{"cost": 1.0 - s["cost"], "correct": (not s["correct"]),
               "confidence": s["confidence"]} for s in signals]
     return summarize(faded, fee_coeff)
@@ -260,6 +308,8 @@ def format_report(report: dict, source_label: str) -> str:
 
 
 def demo_signals(n: int = 4000, seed: int = 42) -> list[dict]:
+    """Synthetic resolved signals with a small genuine edge, so the report
+    runs end-to-end. NOT real data — labeled clearly in the CLI."""
     import random
     rng = random.Random(seed)
     out = []
@@ -318,6 +368,12 @@ def crypto15m_eval(
     max_fav: float = 1.0, min_delta_pct: float = 0.0,
     fee_coeff: float = DEFAULT_FEE_COEFF,
 ) -> dict:
+    """Apply a 15m strategy variant and return its net-of-fee economics.
+
+    `mode`: 'favorite' buys the favorite at its cost; 'contrarian' buys the
+    cheap opposite side (cost ≈ 1 − favorite price, approximate — ignores
+    the spread). Filters on the favorite price band and the underlying
+    delta. Reuses summarize() so the stats match the main backtest."""
     built: list[dict] = []
     for s in signals:
         fp = s["favorite_price"]
@@ -343,6 +399,7 @@ _FAV_BANDS = [(50, 70), (70, 80), (80, 85), (85, 90), (90, 95), (95, 100)]
 
 
 def crypto15m_report(signals: list[dict], fee_coeff: float = DEFAULT_FEE_COEFF) -> dict:
+    """Structured 15m backtest used by both the CLI and the in-app card."""
     favorite = {"mode": "favorite", **crypto15m_eval(signals, mode="favorite", fee_coeff=fee_coeff)}
     contrarian = {"mode": "contrarian", **crypto15m_eval(signals, mode="contrarian", fee_coeff=fee_coeff)}
     fav_sweep = [

@@ -70,7 +70,8 @@
       }
     ],
     "asarUnpack": [
-      "**/node_modules/discord-rpc/**"
+      "**/node_modules/discord-rpc/**",
+      "resources/**"
     ],
     "directories": {
       "buildResources": "build",
@@ -84,8 +85,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": false,
+      "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "menuCategory": false,
+      "runAfterFinish": true,
       "installerIcon": "resources/krypt.ico",
       "uninstallerIcon": "resources/krypt.ico",
       "uninstallDisplayName": "Krypt Trader",

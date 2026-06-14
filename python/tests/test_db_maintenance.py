@@ -1,3 +1,8 @@
+"""Tests for DB retention / compaction (db.cleanup_old_data + run_maintenance).
+
+The whale feed and market poller insert millions of rows over time; these
+guard the pruning that keeps the SQLite file from ballooning to multi-GB.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone

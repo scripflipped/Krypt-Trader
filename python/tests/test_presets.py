@@ -1,3 +1,4 @@
+"""Sanity tests for the data-derived strategy presets."""
 from __future__ import annotations
 
 from config import (

@@ -1,3 +1,19 @@
+"""RSA-PSS request signing for the Kalshi trading API.
+
+Krypt-Trader stores credentials at:
+
+    <userData>/credentials/apikey.txt    UTF-8, single line
+    <userData>/credentials/rsakey.pem    PEM-encoded RSA private key
+
+The path to <userData> is provided via the KRYPT_TRADER_USERDATA env var
+(set by the Electron main process on backend spawn). In dev / standalone
+mode it falls back to `./credentials/` next to this file.
+
+Kalshi authenticates writes with three headers:
+    KALSHI-ACCESS-KEY         : the API key (UUID)
+    KALSHI-ACCESS-TIMESTAMP   : current time in ms since epoch
+    KALSHI-ACCESS-SIGNATURE   : base64(RSA-PSS-SHA256(timestamp + method + path))
+"""
 from __future__ import annotations
 
 import base64
@@ -71,6 +87,7 @@ else:  # pragma: no cover - non-Windows fallback
 
 
 def _write_secret_bytes(path: Path, data: bytes) -> None:
+    """Atomically write `data`, DPAPI-encrypted when possible."""
     global _warned_plaintext
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -89,6 +106,8 @@ def _write_secret_bytes(path: Path, data: bytes) -> None:
 
 
 def _read_secret_bytes(path: Path, upgrade: bool = True) -> bytes:
+    """Read a credential file, decrypting DPAPI-wrapped content. Legacy
+    plaintext is returned as-is and (when possible) re-encrypted in place."""
     raw = path.read_bytes()
     if raw.startswith(_DPAPI_MARKER):
         return _dpapi_decrypt(base64.b64decode(raw[len(_DPAPI_MARKER):]))
@@ -118,6 +137,14 @@ def _env_rsa_key_file(env: str) -> Path:
 
 
 def _maybe_migrate_legacy(env: str) -> None:
+    """One-time: if the legacy single-set files exist AND the env-specific
+    files for `env` do not, copy the legacy files into the env-specific
+    paths and then delete the legacy files. After this, both envs are
+    fully isolated (saving keys for one never spills into the other).
+
+    We migrate into whichever env is the *first* one that asks for keys
+    after the upgrade — usually the active env on first launch.
+    """
     d = _credentials_dir()
     legacy_api = d / "apikey.txt"
     legacy_pem = d / "rsakey.pem"
@@ -144,6 +171,13 @@ def _maybe_migrate_legacy(env: str) -> None:
 
 
 def _api_key_file(env: Optional[str] = None) -> Path:
+    """Return the API key file for `env` (defaults to active env).
+
+    Critically: this is STRICTLY env-isolated. If `env`'s file doesn't
+    exist, we return the canonical env-specific path (which won't exist
+    yet) — we never silently fall back to the *other* env's keys, which
+    is what caused the demo key to appear under the Live slot.
+    """
     e = env or _current_env
     _maybe_migrate_legacy(e)
     return _env_api_key_file(e)
@@ -187,6 +221,7 @@ def _server_time_url() -> str:
 
 
 def reset_credential_cache() -> None:
+    """Drop cached API + RSA key. Call after the user saves new keys."""
     global _cached_api_key, _cached_private_key
     _cached_api_key = None
     _cached_private_key = None
@@ -236,6 +271,11 @@ def credentials_present(env: Optional[str] = None) -> bool:
 
 
 def credentials_status(env: Optional[str] = None) -> dict:
+    """Diagnostic info for the UI — never returns the secret material.
+
+    Pass `env` to inspect a specific env's credentials. Default is the
+    currently-active env (`get_env()`).
+    """
     e = env or _current_env
     apk = _api_key_file(e)
     rkf = _rsa_key_file(e)
@@ -271,6 +311,7 @@ def credentials_status(env: Optional[str] = None) -> dict:
 
 
 def credentials_status_all() -> dict:
+    """Per-env credential status for both Kalshi envs."""
     return {
         "current": _current_env,
         "demo": credentials_status("demo"),
@@ -279,6 +320,9 @@ def credentials_status_all() -> dict:
 
 
 def save_credentials(api_key: str, rsa_pem: str, env: Optional[str] = None) -> None:
+    """Atomically write a credential pair to disk for `env` (defaults to
+    the currently-active env). Writing for one env never touches the
+    other env's saved keys."""
     e = env or _current_env
     d = _credentials_dir()
     d.mkdir(parents=True, exist_ok=True)
@@ -302,6 +346,9 @@ def save_credentials(api_key: str, rsa_pem: str, env: Optional[str] = None) -> N
 
 
 def clear_credentials(env: Optional[str] = None) -> None:
+    """Delete a single env's credentials. Always also wipes the legacy
+    shared files (`apikey.txt`, `rsakey.pem`, `*.env`) so they cannot
+    silently re-appear in the next read via the migration helper."""
     d = _credentials_dir()
     e = env or _current_env
     for p in (_env_api_key_file(e), _env_rsa_key_file(e)):
@@ -322,6 +369,8 @@ def clear_credentials(env: Optional[str] = None) -> None:
 
 
 def migrate_legacy_credentials(target_env: str) -> bool:
+    """Public entry-point to force-migrate the legacy single-set key files
+    into a target env. Returns True if anything was moved."""
     before = _env_api_key_file(target_env).exists()
     _maybe_migrate_legacy(target_env)
     after = _env_api_key_file(target_env).exists()

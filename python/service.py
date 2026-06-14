@@ -1,3 +1,36 @@
+"""Krypt Trader backend service.
+
+Spawned as a child process by the Electron main process. Communicates
+exclusively via JSON-line stdin/stdout (no HTTP server, no shared
+filesystem state besides the SQLite DB and the credential files in
+<userData>).
+
+Wire protocol — one JSON object per line:
+
+  Command         {"type": "rpc", "id": "<uuid>", "method": "...", "params": {...}}
+  Response (ok)   {"type": "rpc", "id": "<uuid>", "ok": true, "result": {...}}
+  Response (err)  {"type": "rpc", "id": "<uuid>", "ok": false, "error": "..."}
+  Event           {"type": "event", "name": "...", "data": {...}}
+  Log             {"type": "log", "level": "INFO", "source": "...", "msg": "..."}
+
+Methods (called from Electron main):
+  ping
+  setConfig          {config: {...}}
+  setCredentials     {apiKey, rsaPem}
+  clearCredentials
+  credentialStatus
+  testCredentials
+  account
+  pnlSeries          {sinceHours?}
+  positions          {filter?}
+  signals            {filter?}
+  scannerStats
+  cancelAllOpen
+  flatten
+  runOnce            {action}                 -- syncMarkets|pollOrders|resolveAll|reconcilePositions
+  pause              {paused: bool}
+  shutdown
+"""
 from __future__ import annotations
 
 import asyncio
@@ -18,6 +51,7 @@ _log_q: asyncio.Queue | None = None
 
 
 class _StdoutHandler(logging.Handler):
+    """Forward every log record up to the Electron parent as a JSON line."""
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -90,6 +124,15 @@ from config import DEFAULT_CONFIG, merge_with_defaults  # noqa: E402
 
 
 def _iso_utc(s: Any) -> Any:
+    """Normalise a SQLite naive-UTC timestamp ("YYYY-MM-DD HH:MM:SS") into
+    a real ISO 8601 UTC string ("YYYY-MM-DDTHH:MM:SSZ").
+
+    Why: SQLite's `datetime('now')` writes naive UTC strings without a Z.
+    JavaScript's Date parser then interprets those strings as LOCAL time
+    (Chrome behaviour), which made every "Started at" / "Resolved at"
+    field show up 7 hours off for users in PT. Tagging with Z makes JS
+    parse them correctly so `toLocaleString()` formats in the user's
+    real local zone."""
     if not s:
         return s
     if not isinstance(s, str):
@@ -387,6 +430,9 @@ _event_webhook_last: dict[int, str] = {}
 
 
 def _should_fire_event_webhook(pos_id: int, kind: str) -> bool:
+    """Return True the first time we see `kind` for a given position id;
+    False on subsequent identical calls. Empty/zero ids always fire so
+    we never silently drop a legitimate event because of a missing id."""
     if not pos_id:
         return True
     if _event_webhook_last.get(pos_id) == kind:
@@ -396,6 +442,7 @@ def _should_fire_event_webhook(pos_id: int, kind: str) -> bool:
 
 
 async def _scanner_and_trader_loop() -> None:
+    """Single coroutine that runs every periodic task on its own cadence."""
     last_whale = 0.0
     last_momentum = 0.0
     last_trade = 0.0
@@ -754,6 +801,13 @@ async def _h_setConfig(p: dict) -> dict:
 
 
 async def _h_setCredentials(p: dict) -> dict:
+    """Save credentials for an env (defaults to the currently-active env).
+
+    Pass `env: 'demo' | 'production'` to save the *other* env's keys
+    without switching the active connection. The caller can then test
+    them via testCredentials({env: ...}) or just call
+    setConfig({kalshi_env: ...}) to switch the live connection.
+    """
     p = p or {}
     api_key = p.get("apiKey", "")
     rsa_pem = p.get("rsaPem", "")
@@ -781,6 +835,12 @@ async def _h_credentialStatus(_p: dict) -> dict:
 
 
 async def _h_testCredentials(p: dict) -> dict:
+    """Verify credentials by hitting `/portfolio/balance`.
+
+    With no `env` parameter, tests the active env. With `env` set,
+    temporarily switches the signing client to that env to verify the
+    other-env credentials, then restores the original env.
+    """
     p = p or {}
     target_env = p.get("env") or kalshi_auth.get_env()
     if not kalshi_auth.credentials_present(target_env):
@@ -1008,6 +1068,7 @@ async def _h_pause(p: dict) -> dict:
 
 
 def _run_row_to_js(r: dict) -> dict:
+    """Serialise a `bot_runs` row for the renderer."""
     return {
         "id": int(r["id"]),
         "kalshiEnv": r.get("kalshi_env") or "demo",
@@ -1037,6 +1098,8 @@ def _run_row_to_js(r: dict) -> dict:
 
 
 async def _h_botRuns(p: dict) -> dict:
+    """Return the most recent bot_runs rows for the History → Run
+    History tab. Optional params: env, limit."""
     env = (p or {}).get("env")
     limit = int((p or {}).get("limit") or 100)
     with db.get_db() as conn:
@@ -1058,6 +1121,18 @@ async def _h_shutdown(_p: dict) -> dict:
 
 
 async def _h_factoryReset(_p: dict) -> dict:
+    """Wipe ALL trade history, bot runs, P&L snapshots, signals, and
+    scanner state from the local DB. Public Kalshi market cache is
+    preserved (no PII, just public data).
+
+    The trader loop is STOPPED first — without this, a reconcile
+    cycle running mid-wipe will re-INSERT the live Kalshi positions
+    we just deleted, which is exactly what made earlier reset
+    attempts look like nothing happened. The active bot run (if any)
+    is closed; in-memory snapshot state is cleared so the dashboard
+    returns to a true zero. The loop is restarted and the next
+    reconcile re-imports live positions as fresh `external` rows.
+    """
     logger.warning("factory reset: STARTING — pausing trader loop")
     await _stop_loop()
 

@@ -15,6 +15,9 @@ type Pending = {
 type EventCallback = (name: string, data: any) => void;
 type LogCallback = (entry: LogEntry) => void;
 
+const STABLE_UPTIME_MS = 30_000;
+const MAX_RAPID_RESTARTS = 5;
+
 class PythonBackend {
   private child: ChildProcessWithoutNullStreams | null = null;
   private pending = new Map<string, Pending>();
@@ -26,6 +29,8 @@ class PythonBackend {
   private pythonOk = false;
   private restartTimer: NodeJS.Timeout | null = null;
   private restartAttempts = 0;
+  private childStartedAtMs = 0;
+  private gaveUp = false;
   private nextId = 1;
   private eventHandlers: EventCallback[] = [];
   private logHandlers: LogCallback[] = [];
@@ -36,6 +41,8 @@ class PythonBackend {
   async start(): Promise<void> {
     if (this.status === 'running' || this.status === 'starting') return;
     this.requestedStop = false;
+    this.gaveUp = false;
+    this.restartAttempts = 0;
     this.startChild();
   }
 
@@ -189,7 +196,7 @@ class PythonBackend {
         if (!probe.error && probe.status === 0) {
           return { cmd: c.cmd, args: [...c.pre, servicePath], cwd: pyDir };
         }
-      } catch { }
+      } catch {   }
     }
     this.lastError = 'No Python 3 interpreter found. Run `npm run py:setup` or install Python 3.10+ from https://python.org.';
     return null;
@@ -228,13 +235,14 @@ class PythonBackend {
       this.lastError = `spawn failed: ${e?.message || e}`;
       this.pythonOk = false;
       this.setStatus('crashed');
-      this.scheduleRestart();
+      this.scheduleRestart(true);
       return;
     }
 
     this.child = child;
     this.pythonOk = true;
     this.startedAt = new Date().toISOString();
+    this.childStartedAtMs = Date.now();
     this.lastError = null;
     this.buffer = '';
 
@@ -252,17 +260,41 @@ class PythonBackend {
         this.setStatus('stopped');
         return;
       }
+      const uptime = Date.now() - this.childStartedAtMs;
       this.lastError = `backend exited (code=${code} signal=${signal})`;
       this.setStatus('crashed');
-      this.scheduleRestart();
+      this.scheduleRestart(uptime < STABLE_UPTIME_MS);
     });
 
   }
 
-  private scheduleRestart(): void {
-    if (this.requestedStop) return;
+  private scheduleRestart(quickCrash: boolean): void {
+    if (this.requestedStop || this.gaveUp) return;
     if (this.restartTimer) return;
-    this.restartAttempts++;
+
+    if (quickCrash) {
+      this.restartAttempts++;
+    } else {
+      this.restartAttempts = 0;
+    }
+
+    if (this.restartAttempts >= MAX_RAPID_RESTARTS) {
+      this.gaveUp = true;
+      this.requestedStop = true;
+      this.lastError =
+        `backend crashed ${this.restartAttempts}× on startup; not restarting. ` +
+        `${this.lastError ?? ''}`.trim();
+      this.setStatus('crashed');
+      const entry: LogEntry = {
+        ts: new Date().toISOString(),
+        level: 'ERROR',
+        source: 'backend',
+        msg: this.lastError,
+      };
+      for (const h of this.logHandlers) h(entry);
+      return;
+    }
+
     const delay = Math.min(2000 * this.restartAttempts, 20_000);
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
@@ -318,7 +350,6 @@ class PythonBackend {
 
     if (this.status === 'starting') {
       this.setStatus('running');
-      this.restartAttempts = 0;
     }
 
     if (obj.type === 'rpc') {

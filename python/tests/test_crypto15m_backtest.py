@@ -1,3 +1,9 @@
+"""Tests for the 15-minute crypto research logger + backtest.
+
+Covers the pure strategy evaluation (favorite vs contrarian, price/delta
+filters), the settled-outcome reader, the whole-window tick logger, and
+the DB round-trip that feeds the CLI 15m backtest.
+"""
 from __future__ import annotations
 
 import asyncio

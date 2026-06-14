@@ -7,7 +7,7 @@ export async function shareToX(text: string): Promise<void> {
   try {
     await window.krypt.app.openExternal(url);
   } catch {
-    try { window.open(url, '_blank'); } catch { }
+    try { window.open(url, '_blank'); } catch {   }
   }
 }
 
@@ -15,6 +15,6 @@ export async function followYuhgo(): Promise<void> {
   try {
     await window.krypt.app.openExternal(X_PROFILE_URL);
   } catch {
-    try { window.open(X_PROFILE_URL, '_blank'); } catch { }
+    try { window.open(X_PROFILE_URL, '_blank'); } catch {   }
   }
 }

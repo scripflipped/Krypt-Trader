@@ -30,7 +30,7 @@ export function ApiKeysPage() {
     try {
       const all = await window.krypt.credentials.statusAll();
       setStatusAll(all);
-    } catch { }
+    } catch {   }
   };
 
   useEffect(() => {

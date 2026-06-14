@@ -1,3 +1,4 @@
+"""Tests for the fee-aware signal backtest math (backtest.py)."""
 from __future__ import annotations
 
 import pytest

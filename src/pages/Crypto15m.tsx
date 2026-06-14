@@ -114,6 +114,7 @@ export function Crypto15mPage() {
         </button>
       }
     >
+      { }
       <div className="mb-4 rounded-xl border border-krypt-border bg-krypt-surface p-3">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
           <div className="min-w-[260px] flex-1">
@@ -169,6 +170,7 @@ export function Crypto15mPage() {
         )}
       </div>
 
+      { }
       <StrategySettings
         config={config}
         liveSignals={live}
@@ -194,6 +196,7 @@ export function Crypto15mPage() {
         </div>
       )}
 
+      { }
       {(openPos.length > 0 || recentPos.length > 0) && (
         <div className="mt-6 space-y-4">
           {openPos.length > 0 && <PositionsTable title="Open positions" rows={openPos} />}
@@ -272,7 +275,7 @@ function StrategySettings({
   const sizingMode = config?.crypto15mSizingMode ?? 'fixed';
   const [savingPreset, setSavingPreset] = useState<string | null>(null);
   const update = async (patch: Partial<TraderConfig>) => {
-    try { await window.krypt.config.update(patch); } catch { }
+    try { await window.krypt.config.update(patch); } catch {   }
   };
   const num = (k: keyof TraderConfig, d: number) => {
     const v = config?.[k] as number | undefined;
@@ -325,6 +328,7 @@ function StrategySettings({
         </div>
       </div>
 
+      { }
       <div className="mb-3 flex flex-wrap gap-2">
         {C15_PRESETS.map((p) => (
           <button
