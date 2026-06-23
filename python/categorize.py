@@ -1,4 +1,3 @@
-"""Category resolution shared by tracker + whale scanner."""
 from __future__ import annotations
 
 KALSHI_CATEGORY_MAP = {

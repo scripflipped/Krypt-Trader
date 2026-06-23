@@ -1,11 +1,3 @@
-"""Unit tests for the pure decision logic in trader.py.
-
-Covers position sizing, signal-cost/edge interpretation, the should_trade
-gate matrix, limit-cross pricing, Kalshi order/position parsing, the
-order->db status machine, and binary settlement payout. These are the
-functions whose past regressions are documented in trader.py's module
-docstring and inline comments — pin them down.
-"""
 from __future__ import annotations
 
 import pytest
@@ -16,7 +8,6 @@ from config import merge_with_defaults
 
 @pytest.fixture
 def cfg() -> dict:
-    """A fully-populated config (all DEFAULT_CONFIG keys present)."""
     return merge_with_defaults({})
 
 

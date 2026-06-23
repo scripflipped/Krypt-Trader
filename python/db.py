@@ -1,14 +1,3 @@
-"""Single SQLite store for the Krypt Trader backend.
-
-Combines the tracker schema (markets, alerts, whale_trades, snapshots,
-trades) with the live-trading schema (bot_positions, order_events,
-pnl_snapshots, daily_stats) into one DB so that the Electron app has a
-single backing file under <userData>/data/krypt-trader.db.
-
-This is a deliberate consolidation of the two separate DBs the
-standalone scripts used to ship with — keeping one DB makes backup,
-migration, and "wipe my data" all one button on the UI.
-"""
 from __future__ import annotations
 
 import logging
@@ -398,23 +387,6 @@ def init_db() -> None:
 
 
 def factory_reset(*, wipe_markets: bool = False) -> dict:
-    """Wipe ALL trading-related tables. Returns row counts deleted.
-
-    Tables ALWAYS wiped (PII / per-user state):
-        bot_positions, bot_runs, pnl_snapshots, daily_stats,
-        order_events, alerts, whale_trades
-
-    Tables wiped only if `wipe_markets=True` (public Kalshi cache —
-    re-syncing all 1000+ markets takes a minute, so usually keep):
-        markets, events, trades, market_snapshots
-
-    Each DELETE is run in its OWN short transaction so a single
-    locked-table error can't roll the whole thing back. If the user's
-    main loop happens to hold a write lock on one table, only that
-    one fails (caller can retry). VACUUM is run on a fresh,
-    autocommit connection because it cannot be inside a transaction.
-    A WAL checkpoint runs first so future readers see the deletion.
-    """
     targets = [
         "bot_positions",
         "bot_runs",
@@ -954,20 +926,6 @@ def count_open_bot_positions(conn, env: str | None = None) -> int:
 
 
 def count_new_positions_today(conn, env: str | None = None) -> int:
-    """Number of NEW bot-initiated positions opened today.
-
-    Two filters that matter for the daily quota check:
-
-      - `status != 'dry_run'` — dry-run rows aren't real exposure.
-      - `signal_source != 'external'` — reconcile-imported rows from
-        Kalshi (positions that already existed externally, or
-        positions the bot resolved locally that Kalshi hasn't
-        cash-settled yet) are NOT new bot trades. Counting them was
-        why setting the daily limit to 300 still produced
-        `MAX_DAILY_NEW_POSITIONS` skips after only a few real trades:
-        the resolve→reconcile loop kept inserting fresh `external`
-        rows for the same (ticker, side) pairs and burning the quota.
-    """
     sql = (
         "SELECT COUNT(*) FROM bot_positions "
         "WHERE date(created_at)=date('now') "
@@ -988,18 +946,6 @@ def recent_resolved_position_exists(
     env: str,
     within_hours: int = 24,
 ) -> bool:
-    """Did we resolve a position for this (ticker, direction, env) recently?
-
-    Used by the reconciler to break the
-    *resolve → reimport-as-external → resolve → reimport* loop when
-    Kalshi's `/portfolio/positions` still lists a market we already
-    settled locally (Kalshi pays out asynchronously and the position
-    can hang on the portfolio for several minutes after settlement).
-
-    `within_hours` defaults to 24 — long enough to cover any
-    realistic settlement-to-payout delay without blocking a genuine
-    new position on the same market the next day.
-    """
     row = conn.execute(
         """SELECT 1 FROM bot_positions
            WHERE ticker = ? AND direction = ? AND kalshi_env = ?
@@ -1048,15 +994,6 @@ def current_total_exposure_usd(conn, env: str) -> float:
 
 
 def get_pending_bot_positions(conn) -> list[dict]:
-    """Return rows the order-poller should chase down. Critical filter:
-    only rows with a kalshi_order_id are eligible. Externally-imported
-    positions (signal_source='external', kalshi_order_id IS NULL) are
-    NEVER pending — they're already-filled adoptions from
-    /portfolio/positions, not orders we placed. Including them here
-    caused the dashboard's "Open Positions" tile to flicker between 0
-    and 9, because the poller would fetch their cost from Kalshi (which
-    sometimes omits market_exposure), set cost back to zero, and the
-    next aggregate_stats roll-up would treat them as no-fill noise."""
     rows = conn.execute(
         """SELECT * FROM bot_positions
            WHERE resolved=0
@@ -1185,9 +1122,6 @@ def count_open_crypto15m(conn, env: str) -> int:
 
 
 def crypto15m_errored_tickers(conn, env: str) -> set:
-    """Tickers whose ENTRY order errored (e.g. exchange paused). Error rows
-    resolve immediately so they don't pin a slot — this set is what stops
-    the executor re-attempting the same market every tick instead."""
     rows = conn.execute(
         """SELECT DISTINCT ticker FROM crypto15m_positions
            WHERE kalshi_env=? AND status='error' AND ticker IS NOT NULL""",
@@ -1229,8 +1163,6 @@ def crypto15m_stats(conn, env: str) -> dict:
 
 
 def insert_crypto15m_signal(conn, row: dict) -> bool:
-    """Record one decision-point signal. UNIQUE(ticker) — returns True if a
-    new row was inserted, False if this market was already logged."""
     cur = conn.execute(
         """INSERT OR IGNORE INTO crypto15m_signals (
               ticker, asset, series, close_time, mins_left, favorite,
@@ -1250,7 +1182,6 @@ def insert_crypto15m_signal(conn, row: dict) -> bool:
 
 
 def unresolved_crypto15m_signals(conn, limit: int = 50) -> list[dict]:
-    """Logged signals still awaiting their settled outcome, oldest first."""
     rows = conn.execute(
         """SELECT * FROM crypto15m_signals
            WHERE resolved=0
@@ -1270,7 +1201,6 @@ def resolve_crypto15m_signal(conn, ticker: str, up_won: int) -> None:
 
 
 def fetch_resolved_crypto15m_signals(conn) -> list[dict]:
-    """All settled signals — the dataset the 15m backtest replays."""
     rows = conn.execute(
         """SELECT * FROM crypto15m_signals
            WHERE resolved=1 AND up_won IS NOT NULL"""
@@ -1297,7 +1227,6 @@ _C15_TICKS_KEEP_DAYS = 45
 
 
 def insert_crypto15m_tick(conn, row: dict) -> None:
-    """Append one whole-window observation of an active 15m market."""
     conn.execute(
         """INSERT INTO crypto15m_ticks (
               ticker, asset, mins_left, yes_bid, yes_ask, up_prob,
@@ -1348,9 +1277,6 @@ def insert_pnl_snapshot(
 
 
 def earliest_pnl_total(conn, env: str) -> float | None:
-    """First-ever recorded total balance for this env. Used as the
-    auto-detected bankroll baseline when the user hasn't pinned a
-    starting bankroll explicitly. Returns None if no snapshot exists."""
     row = conn.execute(
         """SELECT total_usd FROM pnl_snapshots
            WHERE kalshi_env = ?
@@ -1366,9 +1292,6 @@ def earliest_pnl_total(conn, env: str) -> float | None:
 
 
 def first_snapshot_of_today(conn, env: str) -> dict | None:
-    """First snapshot recorded today (local server timezone) for env.
-    Used as the baseline for "today P&L = total_now - today_baseline".
-    Returns the full snapshot row or None if none yet today."""
     row = conn.execute(
         """SELECT * FROM pnl_snapshots
            WHERE kalshi_env = ? AND date(at) = date('now')
@@ -1379,7 +1302,6 @@ def first_snapshot_of_today(conn, env: str) -> dict | None:
 
 
 def latest_snapshot(conn, env: str) -> dict | None:
-    """Most recent snapshot for env, or None if none exist yet."""
     row = conn.execute(
         """SELECT * FROM pnl_snapshots
            WHERE kalshi_env = ?
@@ -1395,16 +1317,6 @@ def start_bot_run(
     conn, *, env: str, cash_usd: float, portfolio_usd: float,
     lifetime_trades: int = 0, lifetime_wins: int = 0, lifetime_losses: int = 0,
 ) -> int:
-    """Open a new bot_runs row. Returns its id (the active run id).
-
-    `lifetime_*` are the env-scoped lifetime counters AT THE MOMENT THIS
-    RUN STARTS. Heartbeats compute per-run trade counts as deltas from
-    these baselines so the History → Run History table shows trades
-    opened **during this session**, not lifetime totals.
-
-    Also closes any previous unfinished run for this env so we never
-    have two open runs simultaneously (e.g. after a hard crash).
-    """
     conn.execute(
         """UPDATE bot_runs
            SET ended_at = COALESCE(ended_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -1434,12 +1346,6 @@ def heartbeat_bot_run(
     conn, run_id: int, *, cash_usd: float, portfolio_usd: float,
     lifetime_trades: int = 0, lifetime_wins: int = 0, lifetime_losses: int = 0,
 ) -> None:
-    """Update the active run's running totals. Called on every account
-    snapshot push so the run's end_balance/pnl is always current.
-
-    `lifetime_*` are the CURRENT env-scoped lifetime counters. Per-run
-    trade counts are computed in SQL as the difference vs the
-    `start_trades_*` baseline captured by `start_bot_run`."""
     if not run_id:
         return
     total = float(cash_usd) + float(portfolio_usd)
@@ -1462,7 +1368,6 @@ def heartbeat_bot_run(
 
 
 def end_bot_run(conn, run_id: int) -> None:
-    """Mark the run as ended (now, ISO 8601 UTC). Idempotent."""
     if not run_id:
         return
     conn.execute(
@@ -1473,7 +1378,6 @@ def end_bot_run(conn, run_id: int) -> None:
 
 
 def get_active_run(conn, env: str) -> dict | None:
-    """Return the current open run for env (if any)."""
     row = conn.execute(
         """SELECT * FROM bot_runs
             WHERE kalshi_env = ? AND ended_at IS NULL
@@ -1484,7 +1388,6 @@ def get_active_run(conn, env: str) -> dict | None:
 
 
 def get_recent_runs(conn, env: str | None = None, limit: int = 50) -> list[dict]:
-    """List the most recent runs (newest first), optionally filtered by env."""
     if env:
         rows = conn.execute(
             """SELECT * FROM bot_runs
@@ -1560,9 +1463,6 @@ _DELETE_BATCH = 50_000
 def _delete_batched(
     where_sql: str, params: tuple, table: str, *, batch: int = _DELETE_BATCH
 ) -> int:
-    """Delete `table` rows matching `where_sql`, one committed chunk at a
-    time, so the write lock is released between batches and the live loop
-    interleaves even when clearing millions of rows. Returns rows deleted."""
     sql = (
         f"DELETE FROM {table} WHERE rowid IN "
         f"(SELECT rowid FROM {table} WHERE {where_sql} LIMIT ?)"
@@ -1580,10 +1480,6 @@ def cleanup_old_data(
     conn=None, *, trade_hours: int = 48, alert_days: int = 45,
     snapshot_hours: int = 6, pnl_days: int = 120,
 ) -> int:
-    """Prune stale rows from the high-volume tables. Safe to call often;
-    on a maintained DB each pass removes only the last interval's overflow.
-    `conn` is accepted for backwards-compatibility but ignored — the
-    batched deletes manage their own short transactions."""
     now = datetime.now(timezone.utc)
     now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     trade_cutoff = (now - timedelta(hours=trade_hours)).strftime("%Y-%m-%d %H:%M:%S")
@@ -1618,7 +1514,6 @@ def cleanup_old_data(
 
 
 def _reclaimable_mb() -> float:
-    """Megabytes of free (deleted-but-not-released) pages in the DB file."""
     with get_db() as conn:
         ps = conn.execute("PRAGMA page_size").fetchone()[0]
         fl = conn.execute("PRAGMA freelist_count").fetchone()[0]
@@ -1626,8 +1521,6 @@ def _reclaimable_mb() -> float:
 
 
 def vacuum() -> None:
-    """Checkpoint the WAL and rewrite the file to reclaim free pages.
-    Uses a dedicated autocommit connection (VACUUM can't run in a txn)."""
     conn = sqlite3.connect(str(db_path()), timeout=120)
     conn.isolation_level = None
     try:
@@ -1641,9 +1534,6 @@ def vacuum() -> None:
 
 
 def run_maintenance(*, vacuum_min_free_mb: float = 200.0, force_vacuum: bool = False) -> dict:
-    """One maintenance pass: prune stale rows, then compact the file when
-    at least `vacuum_min_free_mb` can be reclaimed (VACUUM is expensive, so
-    we don't run it for trivial gains). Returns a summary for logging."""
     deleted = cleanup_old_data()
     free_mb = _reclaimable_mb()
     vacuumed = False

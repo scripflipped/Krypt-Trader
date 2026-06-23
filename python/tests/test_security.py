@@ -1,4 +1,3 @@
-"""Tests for config validation/clamping and at-rest credential encryption."""
 from __future__ import annotations
 
 import pytest

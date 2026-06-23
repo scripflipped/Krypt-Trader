@@ -1,12 +1,3 @@
-"""Whale + momentum scanners.
-
-Both scanners share market sync, trade insertion, and category
-resolution. Each scan cycle inserts new alerts/whales into the DB and
-returns counts so the runner can surface them on the UI.
-
-The scoring functions are direct ports of the originals (calibrated on
-22k+ resolved Kalshi whale trades and 5k+ momentum clusters).
-"""
 from __future__ import annotations
 
 import asyncio
@@ -84,7 +75,6 @@ def compute_whale_score(
     days_to_close: float | None = None,
     category: str = "",
 ) -> float:
-    """Empirically-derived edge over market-implied probability."""
     implied = max(5, min(price * 100, 95))
     edge = 0.0
     if taker_side == "yes":
@@ -258,11 +248,6 @@ async def sync_events() -> int:
 
 
 async def scan_whales(cfg: dict) -> tuple[int, list[dict]]:
-    """Scan recent trades for whale-sized takers and insert new whales.
-
-    Returns (count, new_rows) where `new_rows` are the freshly-inserted
-    DB rows (used for live-pushing them up to the UI).
-    """
     raw = await kalshi_api.fetch_recent_trades(limit=1000)
     if not raw:
         return 0, []
@@ -572,7 +557,6 @@ async def scan_momentum(cfg: dict) -> tuple[int, list[dict]]:
 
 
 async def resolve_alerts_from_markets() -> int:
-    """Mark resolved alerts based on market settlement values."""
     with db.get_db() as conn:
         unresolved = db.get_unresolved_alerts(conn, days=30)
     if not unresolved:

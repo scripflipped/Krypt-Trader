@@ -59,7 +59,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [credentials, setCredentials] = useState<CredentialsState | null>(null);
   const [credentialsAll, setCredentialsAll] = useState<CredentialsStatusAll | null>(null);
   const [strategies, setStrategies] = useState<StrategyPreset[]>([]);
-  const [appVersion, setAppVersion] = useState('1.0.0');
+  const [appVersion, setAppVersion] = useState('1.2.0');
 
   const positionsByIdRef = useRef<Map<number, BotPosition>>(new Map());
   const signalsByKeyRef = useRef<Map<string, SignalRow>>(new Map());

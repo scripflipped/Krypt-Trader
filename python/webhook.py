@@ -1,8 +1,3 @@
-"""Lightweight Discord webhook poster for trade lifecycle events.
-
-This module is fire-and-forget: any failure logs a warning and returns,
-never raising into the trading loop. Krypt-branded embeds.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -264,10 +259,6 @@ def _fmt_pnl(v: float) -> str:
 
 
 def stats_embed(snap: dict, env: str) -> dict:
-    """Build a Discord embed summarising the current bot stats. Used by
-    the periodic (default hourly) stats webhook. Pulls everything from
-    the same `account` snapshot the dashboard renders, so what Discord
-    shows always matches the in-app numbers."""
     cash = float(snap.get("cashUsd") or 0)
     port = float(snap.get("portfolioUsd") or 0)
     total = float(snap.get("totalUsd") or 0)
@@ -325,7 +316,6 @@ def stats_embed(snap: dict, env: str) -> dict:
 
 
 async def send_stats(url: str, snap: dict, env: str) -> None:
-    """Post the periodic stats embed. No-op when the URL is empty."""
     if not url:
         return
     payload = {

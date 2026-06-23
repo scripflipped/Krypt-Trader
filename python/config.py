@@ -1,18 +1,6 @@
-"""Default Krypt Trader configuration.
-
-This dict is the source of truth for what the Python backend understands.
-The Electron renderer's `TraderConfig` mirrors these keys (camelCase on
-the JS side, snake_case here). Conversion is handled by `_camel_keys` in
-the IPC layer.
-
-Every knob the user sees in the UI is here. Add a new one? Add it here
-first, mirror it in `shared/types.ts`, then surface it in
-`src/pages/SettingsPage.tsx`.
-"""
 from __future__ import annotations
 from typing import Any
 
-# pylint: disable=invalid-name
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "kalshi_env": "demo",
@@ -453,9 +441,6 @@ _UNIT_KEYS = [
 
 
 def _validate_config(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Clamp money-critical knobs to sane ranges BEFORE they can drive an
-    order. The renderer is trusted-ish, but a malformed value (e.g. a
-    size fraction of 5.0) must never reach the sizing path uncorrected."""
     d = DEFAULT_CONFIG
     for k in _FRACTION_KEYS:
         cfg[k] = _clampf(cfg.get(k), 0.0, 1.0, d[k])
@@ -495,14 +480,6 @@ def _validate_config(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def merge_with_defaults(user: dict[str, Any]) -> dict[str, Any]:
-    """Apply user overrides on top of DEFAULT_CONFIG.
-
-    Accepts either snake_case or camelCase keys (the Electron renderer
-    sends camelCase; the Python codebase reads snake_case). Always
-    returns a fully populated config dict — missing keys back-fill from
-    defaults. Unknown keys are preserved (forward-compat) but ignored by
-    the running code.
-    """
     out = dict(DEFAULT_CONFIG)
     for k, v in (user or {}).items():
         if k in out:

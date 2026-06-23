@@ -1,7 +1,7 @@
 {
   "name": "krypt-trader",
   "productName": "Krypt Trader",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "A free, fully-featured Kalshi auto-trading bot. Whale tracker, momentum scanner, and configurable trading engine in one polished desktop app. Part of the Krypt free tools suite.",
   "main": "dist-electron/main.js",
   "author": {

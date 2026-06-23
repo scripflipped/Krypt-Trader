@@ -1,10 +1,3 @@
-"""Tests for orderbook normalization (kalshi_api._normalize_orderbook).
-
-Regression for a real bug found via the live demo account: Kalshi's
-elections API returns the book under `orderbook_fp` with dollar-string
-prices, which `_best_cross_price_cents` (expecting cents `yes`/`no`)
-couldn't read — so limit-cross order pricing silently fell back.
-"""
 from __future__ import annotations
 
 import kalshi_api

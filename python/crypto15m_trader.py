@@ -1,26 +1,3 @@
-"""15-minute crypto LIVE executor.
-
-A self-contained execution engine for the 15-min crypto strategy,
-DELIBERATELY ISOLATED from the scanner trader (trader.py): it uses its
-own `crypto15m_positions` table and never touches `bot_positions`, so it
-cannot destabilise the tested whale/momentum engine.
-
-Lifecycle (at most one open position per asset):
-  ENTRY   in the last `time_delay` minutes, when one side is a strong
-          favorite (>= entry threshold) and the delta filter passes
-          (i.e. the monitor's `signal` is true), BUY `order_size`
-          contracts of the favorite at ask + entryDiff.
-  STOP    if the held side's price falls below `exit_threshold`, SELL to
-          flatten — this is the capability the scanner engine lacks.
-  SETTLE  otherwise hold to the 15-min settlement and book pnl from the
-          binary outcome.
-
-The executor is fully INDEPENDENT of the main bot's enable_trading /
-dry_run switches. Two gates must be on for REAL orders:
-    crypto15m_enabled  AND  crypto15m_live   (+ Kalshi auth)
-Otherwise the engine PAPER-TRADES: identical decisions, fills simulated
-against real market prices, no orders placed.
-"""
 from __future__ import annotations
 
 import logging
@@ -39,22 +16,15 @@ logger = logging.getLogger("crypto15m")
 
 
 def direction_for_favorite(favorite: str) -> str:
-    """Map the displayed favorite side to the Kalshi contract side."""
     return "yes" if favorite == "up" else "no"
 
 
 def entry_limit_cents(entry_cost: float, entry_diff: float) -> int:
-    """Favorite ask in [0,1] crossed up by `entry_diff`, clamped 1..99¢."""
     cents = round((float(entry_cost) + float(entry_diff)) * 100)
     return max(1, min(99, int(cents)))
 
 
 def maker_limit_cents(side: str, yes_bid, yes_ask, entry_cost: float) -> int:
-    """Resting (maker) entry price: join the best bid on the side we're
-    buying, so the order adds liquidity instead of crossing the spread.
-
-    up/yes  -> yes best bid;  down/no -> no best bid = 1 - yes best ask.
-    Falls back to 1¢ under the side's ask when the book is unknown."""
     bid = None
     if side == "up":
         bid = yes_bid
@@ -66,7 +36,6 @@ def maker_limit_cents(side: str, yes_bid, yes_ask, entry_cost: float) -> int:
 
 
 def side_prob_from_market(market: Optional[dict], direction: str) -> Optional[float]:
-    """Current probability (0..1) of the side we hold, from a market dict."""
     if not market:
         return None
     yes_bid = crypto15m._price_dollars(market, "yes_bid")
@@ -94,9 +63,6 @@ def should_enter(asset: dict, cfg: dict, *, has_open: bool, open_count: int) -> 
 
 
 def should_stop_loss(position: dict, side_prob: Optional[float], cfg: dict) -> bool:
-    """A filled position trips the stop-loss when the side we hold falls
-    below `exit_threshold`. Only `filled` rows are eligible (not ones
-    already submitting/exiting/exited)."""
     if side_prob is None:
         return False
     if position.get("status") != "filled":
@@ -119,17 +85,6 @@ def _clamp01(v) -> float:
 def compute_entry_contracts(
     cfg: dict, *, entry_limit_cents: int, balance_usd: float, order_size: int
 ) -> int:
-    """Contracts to buy for one entry.
-
-    fixed mode      -> `order_size` contracts.
-    balance_pct mode-> spend `crypto15m_balance_pct` of balance at the
-                       entry price (floored to whole contracts).
-    Either way, if `crypto15m_max_loss_pct` > 0 the capital at risk
-    (contracts x price — the most a buy-only binary can lose) is held to
-    that fraction of balance. Returns 0 when the risk budget can't fund a
-    single contract, so the caller skips the entry rather than overspend.
-    A balance of 0 (no account / paper before a bankroll is known) falls
-    back to the fixed `order_size` and ignores the % cap."""
     price = max(0.01, int(entry_limit_cents) / 100.0)
     bal = max(0.0, float(balance_usd or 0.0))
     mode = (cfg.get("crypto15m_sizing_mode") or "fixed").lower()
@@ -148,9 +103,6 @@ def compute_entry_contracts(
 
 
 async def _bankroll_usd(cfg: dict, authed: bool) -> float:
-    """Balance to size against. Uses live cash when connected (cached by
-    `refresh_balance`), else the user's pinned start bankroll so paper
-    mode can still size by % before an account is linked."""
     if authed:
         try:
             cents, _port = await trader.refresh_balance(cfg, force=False)
@@ -364,8 +316,6 @@ async def _poll_entry(pos: dict, cfg: dict) -> Optional[dict]:
 
 
 def _entry_expired(pos: dict, cfg: dict) -> bool:
-    """An unfilled entry is abandoned within `crypto15m_maker_cancel_min`
-    minutes of its market's close (0 = only once the market has closed)."""
     close_epoch = crypto15m._parse_close_epoch(pos.get("close_time") or "")
     if close_epoch is None:
         return False
@@ -374,11 +324,6 @@ def _entry_expired(pos: dict, cfg: dict) -> bool:
 
 
 async def _paper_poll_entry(pos: dict, cfg: dict) -> Optional[dict]:
-    """Simulate a RESTING paper maker entry honestly: it only fills when
-    the market actually trades down to our limit (the side's ask reaches
-    it) — the same condition under which a real resting bid is hit. An
-    instant simulated fill would hide maker mode's true cost: sometimes
-    you don't get filled and miss the trade."""
     pid = pos["id"]
     limit_cents = int(pos.get("entry_limit_cents") or 0)
     direction = pos.get("direction")
@@ -484,11 +429,6 @@ async def _poll_exit(pos: dict) -> Optional[dict]:
 
 
 async def _settle_if_closed(pos: dict) -> Optional[dict]:
-    """An 'exiting' position whose market settled while the stop-loss sell
-    sat UNFILLED (thin/empty books — routine on demo) still holds its
-    contracts: Kalshi cancels resting orders at close and the binary
-    settles. Book that settlement, or the row stays 'exiting' forever and
-    pins an executor slot (live bug: 5 such rows froze the engine)."""
     try:
         market = await kalshi_api.fetch_market(pos["ticker"])
     except Exception:
@@ -589,8 +529,6 @@ async def _manage_position(pos: dict, cfg: dict, env: str, live: bool) -> Option
 
 
 async def run_tick(cfg: dict, *, authed: bool) -> list[dict]:
-    """One execution pass: manage open positions, then consider entries.
-    Returns the list of changed position rows."""
     if not cfg.get("crypto15m_enabled"):
         return []
     env = trader.get_env()
@@ -641,8 +579,6 @@ async def run_tick(cfg: dict, *, authed: bool) -> list[dict]:
 
 
 async def _sizing_preview(cfg: dict, authed: bool) -> dict:
-    """A worked example of the current sizing settings for the UI, so the
-    user can see roughly how much each bet costs before placing one."""
     mode = (cfg.get("crypto15m_sizing_mode") or "fixed").lower()
     balance_pct = _clamp01(cfg.get("crypto15m_balance_pct", 0.02))
     max_loss_pct = _clamp01(cfg.get("crypto15m_max_loss_pct", 0.0))
@@ -679,7 +615,6 @@ async def _sizing_preview(cfg: dict, authed: bool) -> dict:
 
 
 async def status(cfg: dict, *, authed: bool = False) -> dict:
-    """Snapshot of the executor's positions + stats for the UI."""
     env = trader.get_env()
     with db.get_db() as conn:
         open_rows = db.get_open_crypto15m(conn, env)

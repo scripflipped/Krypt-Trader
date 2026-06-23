@@ -1,39 +1,3 @@
-"""Live trading engine.
-
-Key behaviors:
-
-  1. **Resolution via direct API.** For any unresolved position whose
-     tracker row is missing/stale, we call
-     `kalshi_api.fetch_market(ticker)`, and we additionally walk
-     `get_settled_positions()` once per resolution cycle as a backstop
-     for markets that rotated out before we noticed. This keeps a
-     position from sitting in `filled` forever (and incorrectly
-     counting toward MAX_OPEN_POSITIONS) when a market settles and
-     ages out of the scanner's open-markets sync.
-
-  2. **Position reconcile on startup.** When the trader starts (or
-     restarts after a crash), `reconcile_positions_with_kalshi()`
-     pulls the current Kalshi position list and:
-       - marks any local "open" positions Kalshi doesn't acknowledge
-         as `gone` (settled/expired/canceled while we were down)
-       - imports any Kalshi positions we don't have a local row for
-         (rare — manual UI trades), so they don't break our exposure
-         math the next cycle.
-
-  3. **Daily P&L stop-loss / take-profit.** New gates that pause new
-     entries (without flatting) when today's realized P&L crosses a
-     threshold. Configurable via `stop_loss_on_day` and
-     `take_profit_on_day`.
-
-  4. **Per-env separation.** `bot_positions.kalshi_env` is now part of
-     the dedup keys and counters, so flipping between demo and prod
-     doesn't cross-contaminate the "is this signal already traded?"
-     check.
-
-  5. **Convergence trade source.** A new `signal_source='convergence'`
-     pseudo-signal is emitted by the runner and routed through the
-     same execution path.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -59,8 +23,6 @@ _balance_cache: dict[str, dict] = {}
 
 
 async def refresh_balance(cfg: dict, force: bool = False) -> tuple[int, int]:
-    """Returns (cash_cents, portfolio_cents) for the ACTIVE env, reading
-    from a per-env cache where we can."""
     env = get_env()
     interval = float(cfg.get("balance_poll_interval", 60))
     loop = asyncio.get_event_loop()
@@ -230,19 +192,6 @@ def should_trade(signal: dict, source: str, cfg: dict) -> tuple[bool, str]:
 
 
 def _today_pnl_balance_delta(env: str) -> float | None:
-    """Today's P&L = current total balance − total balance at the
-    first snapshot of today (UTC). This is the SAME number the
-    dashboard's "Today P&L" tile shows, so the daily stop-loss /
-    take-profit gates can never disagree with what the user sees.
-
-    Returns None if there's no baseline yet (very first tick of the
-    day) — caller should treat that as "unknown" and not gate.
-
-    The previous implementation summed `pnl_usd` from `bot_positions`,
-    which inherited any per-trade attribution bug and would falsely
-    trigger the stop-loss when old/imported rows had garbage P&L
-    (e.g. seeing −$4210 when actual session loss was −$5).
-    """
     with db.get_db() as conn:
         first_today = db.first_snapshot_of_today(conn, env)
         if not first_today:
@@ -272,8 +221,6 @@ _DAY_INDEX = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun":
 
 
 def _is_blocked_by_trading_hours(cfg: dict) -> tuple[bool, str]:
-    """If trading_hours_enabled is True, only allow trading inside the
-    configured weekly window. Outside it, scan_for_trades short-circuits."""
     if not cfg.get("trading_hours_enabled"):
         return False, ""
     from datetime import datetime, timedelta, timezone
@@ -309,8 +256,6 @@ def _is_blocked_by_trading_hours(cfg: dict) -> tuple[bool, str]:
 async def execute_signal(
     signal: dict, source: str, cfg: dict, balance_usd: float
 ) -> dict | None:
-    """Place an order for a single signal. Returns the inserted bot_positions
-    row dict on success (or dry-run), or None on skip/error."""
     direction, signal_cost_cents = _signal_cost_cents(signal, source)
     edge_pts = _compute_edge(signal, source)
     env = get_env()
@@ -445,14 +390,6 @@ async def execute_signal(
 
 
 async def scan_for_trades(cfg: dict) -> list[dict]:
-    """Single trading scan. Returns list of newly inserted/updated rows.
-
-    Every silent-skip path now emits an INFO log the first time per
-    minute it fires. Without this, the in-app log gives the user no
-    explanation why the bot is sitting idle even though new signals
-    are coming in — which was the bug behind "set max trades to 300
-    but bot still won't place a trade".
-    """
     global _last_scan_skip_log
     now_ts = time.time()
 
@@ -602,15 +539,6 @@ def _parse_kalshi_order(order: dict) -> dict:
 
 
 def _parse_kalshi_fill(f: dict, default_side: str = "") -> dict:
-    """Parse one `/portfolio/fills` record into {count, side, price_cents}.
-
-    The elections API reports size as `count_fp` ("1.00") and price as
-    `*_price_dollars` ("0.9900"); the legacy API used integer `count` and
-    `yes_price`/`no_price` cents. We confirmed live that ONLY the new shape
-    is served — the old reader keyed on `count`, saw None on every real
-    fill, and reconciled nothing. Read either shape; price_cents is None if
-    it can't be resolved to a sane 1..99c value (caller skips those).
-    """
     if f.get("count") is not None:
         count = int(_f(f.get("count")))
     else:
@@ -681,23 +609,6 @@ _POLL_FAILURE_THRESHOLD = 6
 
 
 async def poll_open_orders(cfg: dict) -> list[dict]:
-    """Reconcile pending orders with Kalshi. Returns list of updated rows.
-
-    Two-tier strategy:
-      1. Per-order via `/portfolio/orders/{id}` (preferred — gives us
-         exact filled_contracts and cost_cents for THIS order).
-      2. Position-aggregate via `/portfolio/positions` (rescue path —
-         used only when the order endpoint can't tell us what
-         happened, e.g. transient 404, missing order id, etc.). The
-         aggregate is safe to attribute to a single local row only
-         when there is exactly one unresolved local row claiming this
-         ticker+direction; otherwise we leave the row alone.
-
-    We **never** mark a row `gone` on a single failed poll — that was
-    the bug that left the user with 16 positions on Kalshi but only 2
-    visible in the dashboard. A row only retires after
-    `_POLL_FAILURE_THRESHOLD` consecutive failures.
-    """
     with db.get_db() as conn:
         pending = db.get_pending_bot_positions(conn)
     if not pending:
@@ -738,17 +649,6 @@ async def poll_open_orders(cfg: dict) -> list[dict]:
         _poll_failures.pop(pid, None)
 
     def _try_rescue_from_position_aggregate(pos: dict) -> dict | None:
-        """If exactly one of OUR unresolved local rows claims this
-        ticker+side, attribute the live position aggregate to it.
-        Returns the updated row or None.
-
-        We skip the DB write entirely when nothing material changed
-        since the last poll — without that guard, every 30-second poll
-        cycle re-touches every "filled" pending row, which fires a
-        Discord webhook + a `position:update` event on the renderer
-        even though absolutely nothing happened. That's the duplicate
-        spam the user reported.
-        """
         live_p = pos_by_key.get((pos["ticker"], pos["direction"]))
         if not live_p:
             return None
@@ -964,12 +864,6 @@ async def poll_open_orders(cfg: dict) -> list[dict]:
 
 
 def _market_yes_payout(market: dict | None) -> Optional[float]:
-    """Return the YES-side $/contract payout if the market is definitively
-    settled, else None. Looks at `result` ("yes"/"no"), `settlement_value_dollars`
-    in [0, 1], and finally `settlement_value` in cents [0, 100].
-
-    Markets are shared between demo and prod, so this is env-safe.
-    """
     if not market:
         return None
     result = (market.get("result") or "").lower()
@@ -998,34 +892,6 @@ def _market_yes_payout(market: dict | None) -> Optional[float]:
 
 
 async def mark_resolved_positions(cfg: dict) -> list[dict]:
-    """Resolve filled positions whose markets have settled.
-
-    Each local position row is resolved **independently** based on:
-      - its own `filled_contracts` and `cost_usd` (what we actually paid)
-      - the binary outcome of the market (`result` from the public
-        `/markets/{ticker}` endpoint)
-
-    P&L formula (per row):
-        settlement_usd = filled * our_payout    # our_payout ∈ {0, 1} for binary
-        pnl_usd        = settlement_usd - cost_usd
-
-    Why per-row instead of grouping by ticker?
-
-    Kalshi's `/portfolio/positions?settlement_status=settled` reports the
-    *cumulative lifetime* `realized_pnl_dollars` for a (ticker, env)
-    pair. Two pitfalls when we tried to use it:
-
-      1. It includes P&L from old historical trades on the same ticker —
-         attributing that to today's local rows was wrong.
-      2. With multiple local rows on the same ticker, prorating by cost
-         smeared the lifetime aggregate evenly when it should have been
-         per-row based on each fill's relationship to settlement.
-
-    The market's settlement value is shared between demo and prod (same
-    underlying event), so we can use the public endpoint regardless of
-    `kalshi_env`. No-fill rows (canceled/expired/gone with filled=0)
-    always resolve at $0 with NULL outcome (didn't actually trade).
-    """
     with db.get_db() as conn:
         unresolved = db.get_unresolved_bot_positions(conn)
     if not unresolved:
@@ -1160,17 +1026,6 @@ async def mark_resolved_positions(cfg: dict) -> list[dict]:
 
 
 async def reconcile_fills_from_kalshi() -> dict:
-    """For every local position with a `kalshi_order_id`, pull its
-    authoritative fill list from Kalshi and rewrite `filled_contracts`,
-    `cost_usd`, `avg_fill_price_cents`. Then reset+rerun the resolver.
-
-    This is the recovery action for any position rows that ended up with
-    inflated filled/cost numbers from older buggy poll paths. After this
-    runs, `pnl_usd` is computed from authoritative per-order fills and
-    the market's binary settlement, with no aggregation across rows.
-
-    Returns {fills_reconciled, pnl_cleared, pnl_recomputed}.
-    """
     env = get_env()
     with db.get_db() as conn:
         rows = conn.execute(
@@ -1260,11 +1115,6 @@ async def reconcile_fills_from_kalshi() -> dict:
 
 
 async def audit_pnl(limit: int = 200) -> dict:
-    """Recompute pnl for every resolved position from its stored
-    filled/cost and the market's current settlement, and return a
-    breakdown of any rows where the stored value disagrees with the
-    fresh recompute. Useful for diagnosing where realized P&L is off.
-    """
     env = get_env()
     with db.get_db() as conn:
         rows = conn.execute(
@@ -1318,10 +1168,6 @@ async def audit_pnl(limit: int = 200) -> dict:
 
 
 async def recompute_pnl_from_kalshi() -> dict:
-    """Lighter version of `reconcile_fills_from_kalshi`: only resets
-    pnl/outcome and reruns the resolver. Useful when you trust the
-    locally-stored filled/cost but want fresh settlement attribution.
-    """
     env = get_env()
     with db.get_db() as conn:
         cleared = conn.execute(
@@ -1341,30 +1187,6 @@ async def recompute_pnl_from_kalshi() -> dict:
 
 
 async def reconcile_positions_with_kalshi() -> tuple[dict, list[dict]]:
-    """Fix our local view of the world to match what Kalshi shows.
-
-    Source of truth: `/portfolio/positions`. For each Kalshi position
-    with non-zero qty, we look for ANY local row matching
-    (ticker, direction, env) — including rows previously marked `gone`
-    or `canceled` by older buggy poll code:
-
-      - Found, unresolved, active status (submitted/partial/filled):
-        → just sync `filled_contracts` / `cost_usd`.
-      - Found, unresolved, terminal status (gone/canceled/expired/error):
-        → **resurrect** as `filled` (status=filled, error=null). This is
-        the fix for "dashboard says 2 open but Kalshi shows 16".
-      - Found, but already resolved: this is a brand-new round on the
-        same ticker → import as a new `external` row.
-      - No matching row at all: → import as new `external` row.
-
-    Local rows that aren't in Kalshi's live list are left alone — let
-    `mark_resolved_positions` decide if the market settled. Aggressive
-    orphan-marking was the regression that hid live positions.
-
-    Returns (summary, changed_rows). `changed_rows` is the list of
-    positions the caller should emit `position:update`/`position:new`
-    events for so the renderer's React state stays in sync.
-    """
     summary = {
         "closed_orphans": 0,
         "imported_unknowns": 0,
@@ -1381,10 +1203,6 @@ async def reconcile_positions_with_kalshi() -> tuple[dict, list[dict]]:
         return summary, changed
 
     def _signed_qty(p: dict) -> float:
-        """Quantity (signed: + YES, − NO) — try every field Kalshi has
-        used over time. The original codebase relied on `position_fp`
-        but recent responses sometimes only populate `position`. We
-        accept either."""
         for k in ("position_fp", "position"):
             v = p.get(k)
             if v in (None, "", 0):
@@ -1398,8 +1216,6 @@ async def reconcile_positions_with_kalshi() -> tuple[dict, list[dict]]:
         return 0.0
 
     def _cost_cents(p: dict) -> float:
-        """Cost basis in cents — `market_exposure` is cents (int),
-        `market_exposure_dollars` is a USD string. Try both."""
         v = p.get("market_exposure")
         if v not in (None, "", 0):
             try:
