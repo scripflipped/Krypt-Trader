@@ -532,7 +532,7 @@ async def run_tick(cfg: dict, *, authed: bool) -> list[dict]:
     if not cfg.get("crypto15m_enabled"):
         return []
     env = trader.get_env()
-    live = bool(authed) and bool(cfg.get("crypto15m_live"))
+    live = bool(authed) and bool(cfg.get("crypto15m_live")) and env == "production"
 
     snap = await crypto15m.snapshot(cfg)
     assets = {a["asset"]: a for a in snap.get("assets", [])}
@@ -621,10 +621,12 @@ async def status(cfg: dict, *, authed: bool = False) -> dict:
         recent = db.recent_crypto15m(conn, env, limit=40)
         stats = db.crypto15m_stats(conn, env)
     live_armed = bool(cfg.get("crypto15m_live"))
+    live_supported = env == "production"
     return {
         "enabled": bool(cfg.get("crypto15m_enabled")),
-        "live": bool(cfg.get("crypto15m_enabled")) and live_armed and bool(authed),
+        "live": bool(cfg.get("crypto15m_enabled")) and live_armed and bool(authed) and live_supported,
         "liveArmed": live_armed,
+        "liveSupported": live_supported,
         "authed": bool(authed),
         "orderSize": int(cfg.get("crypto15m_order_size", 1)),
         "maxConcurrent": int(cfg.get("crypto15m_max_concurrent", len(crypto15m.SERIES))),

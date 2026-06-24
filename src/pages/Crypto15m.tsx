@@ -96,6 +96,7 @@ export function Crypto15mPage() {
   const liveArmed = !!config?.crypto15mLive;
   const isLive = !!status?.live;
   const authed = !!status?.authed;
+  const liveSupported = status?.liveSupported ?? true;
   const mode: 'OFF' | 'PAPER' | 'LIVE' = !enabled ? 'OFF' : isLive ? 'LIVE' : 'PAPER';
   const openPos = status?.open ?? [];
   const recentPos = (status?.recent ?? []).filter((p) => p.resolved);
@@ -156,13 +157,21 @@ export function Crypto15mPage() {
             />
           </div>
         </div>
-        {enabled && liveArmed && !authed && (
+        {enabled && !liveSupported && (
+          <div className="mt-2 text-[11px] text-krypt-warn">
+            Kalshi's <span className="text-krypt-muted">demo</span> exchange doesn't carry the 15-minute crypto
+            markets, so real orders can't be placed here. On demo this runs in
+            <span className="text-krypt-muted"> paper mode</span> (simulated against real prices) — switch to a
+            <span className="text-krypt-muted"> Live</span> account in Settings to trade them for real.
+          </div>
+        )}
+        {enabled && liveSupported && liveArmed && !authed && (
           <div className="mt-2 text-[11px] text-krypt-warn">
             Live is armed but Kalshi isn't connected — paper-trading until you connect your account in
             <span className="text-krypt-muted"> Settings → Credentials</span>.
           </div>
         )}
-        {enabled && !liveArmed && (
+        {enabled && liveSupported && !liveArmed && (
           <div className="mt-2 text-[11px] text-krypt-dim">
             Paper mode. Flip <span className="text-krypt-muted">Real orders (LIVE)</span> to trade your Kalshi
             balance — no other settings needed.

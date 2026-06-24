@@ -8,7 +8,7 @@ import uuid
 
 import httpx
 
-from kalshi_auth import sign_headers, get_env
+from kalshi_auth import sign_headers, get_env, sync_server_time
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +281,13 @@ async def _signed_request(
             body = resp.json()
         except Exception:
             body = resp.text
+
+        if resp.status_code == 401 and attempt < MAX_RETRIES:
+            code = ((body.get("error") or {}).get("code") or "") if isinstance(body, dict) else ""
+            if "timestamp" in code:
+                sync_server_time(force=True)
+                await asyncio.sleep(0.2)
+                continue
 
         if resp.status_code >= 400:
             raise KalshiAPIError(resp.status_code, body)

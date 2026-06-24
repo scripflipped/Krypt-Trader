@@ -30,6 +30,12 @@ def env_demo(monkeypatch):
 
 
 @pytest.fixture
+def env_prod(monkeypatch):
+    monkeypatch.setattr(trader, "get_env", lambda: "production")
+    return "production"
+
+
+@pytest.fixture
 def cfg():
     c = merge_with_defaults({})
     c["kalshi_env"] = "demo"
@@ -237,7 +243,7 @@ def _capture_orders(monkeypatch):
     return calls
 
 
-def test_live_gate_is_independent_of_main_bot(fresh_db, env_demo, cfg, monkeypatch):
+def test_live_gate_is_independent_of_main_bot(fresh_db, env_prod, cfg, monkeypatch):
     cfg["crypto15m_live"] = True
     cfg["enable_trading"] = False
     cfg["dry_run"] = True
@@ -249,7 +255,7 @@ def test_live_gate_is_independent_of_main_bot(fresh_db, env_demo, cfg, monkeypat
     assert len(calls) == 1
     assert calls[0]["action"] == "buy"
     with db.get_db() as conn:
-        r = db.get_open_crypto15m(conn, "demo")[0]
+        r = db.get_open_crypto15m(conn, "production")[0]
     assert r["status"] == "submitted"
     assert r["dry_run"] == 0
     assert r["kalshi_order_id"] == "ord-1"
@@ -283,7 +289,28 @@ def test_live_armed_without_auth_paper_trades(fresh_db, env_demo, cfg, monkeypat
     assert r["dry_run"] == 1
 
 
-def test_status_reports_live_armed_and_authed(fresh_db, env_demo, cfg, monkeypatch):
+def test_demo_forces_paper_even_when_live_armed(fresh_db, env_demo, cfg, monkeypatch):
+    async def _bal(_cfg, force=False):
+        return 10_000, 0
+    monkeypatch.setattr(trader, "refresh_balance", _bal)
+    cfg["crypto15m_live"] = True
+    monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
+    calls = _capture_orders(monkeypatch)
+
+    run_async(ct.run_tick(cfg, authed=True))
+
+    assert calls == []
+    with db.get_db() as conn:
+        r = db.get_open_crypto15m(conn, "demo")[0]
+    assert r["dry_run"] == 1
+
+    st = run_async(ct.status(cfg, authed=True))
+    assert st["liveSupported"] is False
+    assert st["live"] is False
+    assert st["liveArmed"] is True
+
+
+def test_status_reports_live_armed_and_authed(fresh_db, env_prod, cfg, monkeypatch):
     async def _bal(_cfg, force=False):
         return 10_000, 0
     monkeypatch.setattr(trader, "refresh_balance", _bal)
@@ -302,7 +329,7 @@ def test_status_reports_live_armed_and_authed(fresh_db, env_demo, cfg, monkeypat
 
 
 
-def test_failed_entry_resolves_immediately_and_blocks_retry(fresh_db, env_demo, cfg, monkeypatch):
+def test_failed_entry_resolves_immediately_and_blocks_retry(fresh_db, env_prod, cfg, monkeypatch):
     cfg["crypto15m_live"] = True
 
     async def _paused(**kw):
@@ -312,7 +339,7 @@ def test_failed_entry_resolves_immediately_and_blocks_retry(fresh_db, env_demo, 
 
     run_async(ct.run_tick(cfg, authed=True))
     with db.get_db() as conn:
-        assert db.count_open_crypto15m(conn, "demo") == 0
+        assert db.count_open_crypto15m(conn, "production") == 0
         r = dict(conn.execute("SELECT * FROM crypto15m_positions").fetchone())
     assert r["status"] == "error"
     assert r["resolved"] == 1
@@ -440,7 +467,7 @@ def test_paper_maker_entry_cancels_inside_cancel_lead(fresh_db, env_demo, cfg, m
     assert r["exit_reason"] == "unfilled_expired"
 
 
-def test_live_maker_entry_places_resting_order_at_bid(fresh_db, env_demo, cfg, monkeypatch):
+def test_live_maker_entry_places_resting_order_at_bid(fresh_db, env_prod, cfg, monkeypatch):
     cfg["crypto15m_entry_style"] = "maker"
     cfg["crypto15m_live"] = True
     monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))

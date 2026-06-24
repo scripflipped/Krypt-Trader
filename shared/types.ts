@@ -438,6 +438,7 @@ export interface Crypto15mStatus {
   enabled: boolean;
   live: boolean;
   liveArmed: boolean;
+  liveSupported: boolean;
   authed: boolean;
   orderSize: number;
   maxConcurrent: number;
