@@ -76,7 +76,7 @@ export function GuidePage() {
               body={
                 <>
                   Use the referral link above for $25 free. Demo mode works without a
-                  funded production account if you only want to paper-trade.
+                  funded production account if you only want to test on demo.
                 </>
               }
             />
@@ -122,12 +122,13 @@ export function GuidePage() {
             />
             <Step
               n={5}
-              title="Stay in dry-run, then go live"
+              title="Test on demo, then go live"
               body={
                 <>
-                  Keep <span className="text-white">Dry-Run</span> on (top bar) until
-                  you've watched a few scan cycles. Flip it off to send real orders.
-                  The Pause button at the top right is your kill-switch.
+                  Run on the <span className="text-white">Demo</span> environment
+                  (Settings) until you've watched a few scan cycles and trust the
+                  config, then switch to Production to trade real money. The Pause
+                  button at the top right is your kill-switch.
                 </>
               }
             />
@@ -144,9 +145,8 @@ export function GuidePage() {
             <p className="text-sm text-krypt-muted">
               Kalshi runs a full <span className="text-white">demo exchange</span> with real order
               matching, fills, and settlement — but <span className="text-white">play money</span>.
-              It's the most realistic way to test a strategy with zero risk: connect demo keys, turn{' '}
-              <span className="text-white">dry-run off</span>, and the bot places real orders against
-              the sandbox. (Dry-run still exists as an extra brake — see the note below.)
+              It's the most realistic way to test a strategy with zero risk: connect demo keys, enable
+              auto-trading, and the bot places real orders against the sandbox — play money, no risk.
             </p>
           </div>
           <ol className="space-y-4 text-sm">

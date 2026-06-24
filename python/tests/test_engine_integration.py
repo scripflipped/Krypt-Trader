@@ -152,29 +152,23 @@ def test_execute_skips_when_exposure_leaves_under_one_dollar(fresh_db, env_demo,
 
 
 
-def test_execute_dry_run_inserts_row_without_ordering(fresh_db, env_demo, cfg, monkeypatch):
-    cfg["dry_run"] = True
+def test_execute_skips_when_trading_disabled(fresh_db, env_demo, cfg, monkeypatch):
+    cfg["enable_trading"] = False
     monkeypatch.setattr(trader, "get_orderbook", _stub_empty_book)
 
     def _boom(**_kw):
-        raise AssertionError("place_limit_order must not be called in dry-run")
+        raise AssertionError("place_limit_order must not be called when trading is disabled")
 
     monkeypatch.setattr(trader, "place_limit_order", _boom)
 
     row = run_async(
-        trader.execute_signal(whale_signal(id=200, ticker="DRY"), "whale", cfg, 1000.0)
+        trader.execute_signal(whale_signal(id=200, ticker="OFF"), "whale", cfg, 1000.0)
     )
-    assert row is not None
-    assert row["status"] == "dry_run"
-    assert row["ticker"] == "DRY"
-    assert row["direction"] == "yes"
-    assert row["kalshi_env"] == "demo"
-    assert row["limit_price_cents"] == 62
-    assert row["target_contracts"] == 80
+    assert row is None
+    assert count_rows() == 0
 
 
 def test_execute_real_order_records_kalshi_order_id(fresh_db, env_demo, cfg, monkeypatch):
-    cfg["dry_run"] = False
     cfg["enable_trading"] = True
     monkeypatch.setattr(trader, "get_orderbook", _stub_empty_book)
 
@@ -199,7 +193,6 @@ def test_execute_real_order_records_kalshi_order_id(fresh_db, env_demo, cfg, mon
 
 
 def test_execute_api_error_is_persisted_as_error_row(fresh_db, env_demo, cfg, monkeypatch):
-    cfg["dry_run"] = False
     cfg["enable_trading"] = True
     monkeypatch.setattr(trader, "get_orderbook", _stub_empty_book)
 
@@ -217,7 +210,6 @@ def test_execute_api_error_is_persisted_as_error_row(fresh_db, env_demo, cfg, mo
 
 
 def test_execute_skips_when_live_cross_exceeds_entry_cap(fresh_db, env_demo, cfg, monkeypatch):
-    cfg["dry_run"] = False
     cfg["enable_trading"] = True
 
     async def _moved_book(_ticker):

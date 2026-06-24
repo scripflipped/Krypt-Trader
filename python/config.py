@@ -4,7 +4,6 @@ from typing import Any
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "kalshi_env": "demo",
-    "dry_run": True,
     "enable_trading": False,
 
     "trade_whales": True,
@@ -22,6 +21,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "allowed_whale_categories": None,
     "allowed_momentum_categories": None,
     "contrarian_only": True,
+
+    # "Secret Strategy" — pure-gambling mode. Ignores every gate and gives each
+    # fresh signal a flat random chance to trade. For fun only.
+    "gambling_mode": False,
+    "gambling_trade_probability": 0.10,
+
+    # "percent" = edge-scaled % of balance (below). "fixed" = a flat dollar
+    # amount per trade (fixed_trade_usd), ignoring the fractions.
+    "sizing_mode": "percent",
+    "fixed_trade_usd": 5.0,
 
     "base_size_fraction": 0.03,
     "min_size_fraction": 0.02,
@@ -70,7 +79,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "min_entry_price_frac": 0.50,
 
     "crypto15m_time_delay_min": 8.0,
-    "crypto15m_entry_threshold": 0.95,
+    "crypto15m_entry_threshold": 0.70,
     "crypto15m_entry_max": 0.98,
     "crypto15m_exit_threshold": 0.40,
     "crypto15m_min_delta_pct": 0.0,
@@ -292,8 +301,8 @@ STRATEGY_PRESETS: list[dict[str, Any]] = [
             "Sports Momentum has a higher raw edge, but this diversifies across "
             "two independent sources, so it's the most reliable. In-sample "
             "+15.6c/contract (t=3.2, n=81) vs the unfiltered default's "
-            "net-NEGATIVE edge. EXPERIMENTAL / in-sample — paper-trade with "
-            "'Paper Trade' first to confirm it holds forward."
+            "net-NEGATIVE edge. EXPERIMENTAL / in-sample — test on Demo "
+            "first to confirm it holds forward."
         ),
         "riskLabel": "experimental",
         "badge": "recommended",
@@ -310,21 +319,6 @@ STRATEGY_PRESETS: list[dict[str, Any]] = [
             "min_confidence_momentum": 40.0,
             "min_entry_price_cents": 15,
             "max_entry_price_cents": 85,
-        },
-    },
-    {
-        "id": "krypt-paper",
-        "name": "Paper Trade",
-        "tagline": "Dry-run everything. Test signals without risk.",
-        "description": (
-            "Identical signal gates to Balanced, but DRY-RUN is on so "
-            "no real orders are placed. Use this to sanity-check a "
-            "config for a few days before flipping enable_trading on."
-        ),
-        "riskLabel": "safe",
-        "config": {
-            "dry_run": True,
-            "enable_trading": True,
         },
     },
     {
@@ -437,6 +431,7 @@ _FRACTION_KEYS = [
 _UNIT_KEYS = [
     "crypto15m_entry_threshold", "crypto15m_entry_max", "crypto15m_exit_threshold",
     "crypto15m_min_delta_pct", "crypto15m_entry_diff", "min_entry_price_frac",
+    "gambling_trade_probability",
 ]
 
 
@@ -449,6 +444,9 @@ def _validate_config(cfg: dict[str, Any]) -> dict[str, Any]:
     if cfg["min_size_fraction"] > cfg["max_size_fraction"]:
         cfg["min_size_fraction"] = cfg["max_size_fraction"]
 
+    if cfg.get("sizing_mode") not in ("percent", "fixed"):
+        cfg["sizing_mode"] = d["sizing_mode"]
+    cfg["fixed_trade_usd"] = _clampf(cfg.get("fixed_trade_usd"), 0.0, 1e9, d["fixed_trade_usd"])
     cfg["hard_max_position_usd"] = _clampf(cfg.get("hard_max_position_usd"), 0.0, 1e9, d["hard_max_position_usd"])
     cfg["min_entry_price_cents"] = _clampi(cfg.get("min_entry_price_cents"), 1, 99, d["min_entry_price_cents"])
     cfg["max_entry_price_cents"] = _clampi(cfg.get("max_entry_price_cents"), 1, 99, d["max_entry_price_cents"])
@@ -461,6 +459,7 @@ def _validate_config(cfg: dict[str, Any]) -> dict[str, Any]:
     cfg["max_positions_per_event"] = _clampi(cfg.get("max_positions_per_event"), 1, 100_000, d["max_positions_per_event"])
     cfg["stop_loss_on_day"] = _clampf(cfg.get("stop_loss_on_day"), -1e9, 0.0, d["stop_loss_on_day"])
     cfg["take_profit_on_day"] = _clampf(cfg.get("take_profit_on_day"), 0.0, 1e9, d["take_profit_on_day"])
+    cfg["gambling_mode"] = bool(cfg.get("gambling_mode", False))
     cfg["crypto15m_live"] = bool(cfg.get("crypto15m_live", False))
     cfg["crypto15m_order_size"] = _clampi(cfg.get("crypto15m_order_size"), 1, 10_000, d["crypto15m_order_size"])
     cfg["crypto15m_max_concurrent"] = _clampi(cfg.get("crypto15m_max_concurrent"), 1, 50, d["crypto15m_max_concurrent"])

@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import {
-  Banknote, Bitcoin, Cloud, Film, Globe2, RotateCcw, Save,
+  AlertTriangle, Banknote, Bitcoin, Cloud, Film, Globe2, RotateCcw, Save,
   Trophy, Vote,
 } from 'lucide-react';
 import type { TraderConfig } from '@shared/types';
 import { useApp } from '../state/AppStateProvider';
 import { useToast } from '../state/ToastProvider';
-import { Card, NumberInput, Page, Section, Switch } from '../components/common';
+import { Card, NameDialog, NumberInput, Page, PercentInput, Section, Switch } from '../components/common';
 import { cls } from '../utils/format';
+import { computeTradeWarnings } from '../utils/warnings';
 
 const KRYPT_CATEGORIES: { id: string; label: string; Icon: typeof Trophy }[] = [
   { id: 'sports', label: 'Sports', Icon: Trophy },
@@ -20,9 +21,10 @@ const KRYPT_CATEGORIES: { id: string; label: string; Icon: typeof Trophy }[] = [
 ];
 
 export function SettingsPage() {
-  const { config, refresh, state } = useApp();
+  const { config, account, credentialsAll, refresh, state } = useApp();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
 
   if (!config) return <Page title="Settings"><div className="text-krypt-muted">Loading…</div></Page>;
 
@@ -33,6 +35,26 @@ export function SettingsPage() {
     } catch (e: any) {
       toast.error(`${e?.message || e}`);
     }
+  };
+
+  // Switching env is the #1 place users silently lock themselves out (wrong /
+  // missing keys for the target env). Make it loud: switch, then verify + tell them.
+  const switchEnv = async (e: 'demo' | 'production'): Promise<void> => {
+    if (!config || e === config.kalshiEnv) return;
+    await update('kalshiEnv', e);
+    const label = e === 'production' ? 'Production (real money)' : 'Demo (play money)';
+    const creds = e === 'production' ? credentialsAll?.production : credentialsAll?.demo;
+    if (!creds?.hasApiKey || !creds?.hasRsaKey) {
+      toast.warn(`Switched to ${label}, but no API keys are saved for it. Add them on the API Keys page or the bot can't connect or trade.`);
+      return;
+    }
+    const r = await window.krypt.credentials.test(e);
+    if (r.ok) {
+      toast.success(`Connected to ${label}.`);
+    } else {
+      toast.error(`${label} keys were rejected by Kalshi — open the API Keys page and re-check the key for this environment. (${r.message ?? 'auth failed'})`);
+    }
+    await refresh.credentials();
   };
 
   const reset = async (): Promise<void> => {
@@ -47,15 +69,17 @@ export function SettingsPage() {
     }
   };
 
-  const saveAsProfile = async (): Promise<void> => {
-    const name = window.prompt('Save these settings as a profile. Name?')?.trim();
-    if (!name) return;
+  const saveAsProfile = async (name: string): Promise<void> => {
+    setSaveOpen(false);
     const r = await window.krypt.profiles.save(name);
-    if (r.ok) toast.success(r.message || `Saved "${name}"`);
-    else toast.error(r.message || 'Could not save profile');
+    if (r.ok) {
+      toast.success(r.message || `Saved "${name}"`);
+      await refresh.state();
+    } else toast.error(r.message || 'Could not save profile');
   };
 
   const env = config.kalshiEnv;
+  const warnings = computeTradeWarnings(config, account);
 
   return (
     <Page
@@ -66,12 +90,31 @@ export function SettingsPage() {
           <button onClick={reset} disabled={busy} className="krypt-btn-default">
             <RotateCcw className="h-4 w-4" /> Reset
           </button>
-          <button onClick={saveAsProfile} className="krypt-btn-primary">
+          <button onClick={() => setSaveOpen(true)} className="krypt-btn-primary">
             <Save className="h-4 w-4" /> Save as Profile
           </button>
         </>
       }
     >
+      {warnings.length > 0 && (
+        <div className="mb-5 space-y-2">
+          {warnings.map((w) => (
+            <div
+              key={w.id}
+              className={cls(
+                'flex items-start gap-2 rounded-lg border px-3 py-2 text-xs',
+                w.severity === 'block'
+                  ? 'border-krypt-loss/40 bg-krypt-loss/10 text-krypt-loss'
+                  : 'border-krypt-warn/40 bg-krypt-warn/10 text-krypt-warn',
+              )}
+            >
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{w.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <Section title="Environment">
         <Card>
           <div className="grid gap-4 md:grid-cols-2">
@@ -81,7 +124,7 @@ export function SettingsPage() {
                 {(['demo', 'production'] as const).map((e) => (
                   <button
                     key={e}
-                    onClick={() => update('kalshiEnv', e)}
+                    onClick={() => void switchEnv(e)}
                     className={cls(
                       'flex-1 rounded-md border px-3 py-2 text-sm capitalize transition-colors',
                       env === e
@@ -100,15 +143,9 @@ export function SettingsPage() {
             <div className="flex flex-col gap-2">
               <Switch
                 label="Auto-trading enabled"
-                description="Master kill switch. When off, signals stream in but no orders are placed."
+                description="Master kill switch. When off, signals stream in but no orders are placed. To test risk-free, run on the Demo environment above."
                 checked={config.enableTrading}
                 onChange={(v) => void update('enableTrading', v)}
-              />
-              <Switch
-                label="Dry-run mode"
-                description="When on, the engine pretends to place orders but never sends them. Safe to test configs."
-                checked={config.dryRun}
-                onChange={(v) => void update('dryRun', v)}
               />
             </div>
           </div>
@@ -203,40 +240,68 @@ export function SettingsPage() {
 
       <Section
         title="Position sizing"
-        description="Bot sizes 2-6% of bankroll by default, scaled by edge. Hard cap protects you on a single bad pick."
+        description="Size each trade as a % of balance (edge-scaled) or a fixed dollar amount. Hard cap protects you on a single bad pick."
       >
         <Card>
+          <div className="mb-4">
+            <label className="krypt-label">Sizing mode</label>
+            <div className="flex gap-2">
+              {([['percent', '% of balance'], ['fixed', 'Fixed $ per trade']] as const).map(([m, lbl]) => (
+                <button
+                  key={m}
+                  onClick={() => void update('sizingMode', m)}
+                  className={cls(
+                    'flex-1 rounded-md border px-3 py-2 text-sm transition-colors',
+                    config.sizingMode === m
+                      ? 'border-krypt-purple bg-krypt-purple/10 text-white'
+                      : 'border-krypt-border bg-krypt-surface2 text-krypt-muted hover:border-krypt-borderHi',
+                  )}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="grid gap-4 md:grid-cols-3">
-            <Field label="Base size (fraction)">
-              <NumberInput value={config.baseSizeFraction} step={0.005} min={0.001} max={1}
-                onChange={(v) => void update('baseSizeFraction', v)} />
-            </Field>
-            <Field label="Min size">
-              <NumberInput value={config.minSizeFraction} step={0.005} min={0.001} max={1}
-                onChange={(v) => void update('minSizeFraction', v)} />
-            </Field>
-            <Field label="Max size">
-              <NumberInput value={config.maxSizeFraction} step={0.005} min={0.001} max={1}
-                onChange={(v) => void update('maxSizeFraction', v)} />
-            </Field>
-            <Field label="Sizing base edge">
-              <NumberInput value={config.sizingBaseEdge} step={1} suffix="pts"
-                onChange={(v) => void update('sizingBaseEdge', v)} />
-            </Field>
-            <Field label="Sizing max edge">
-              <NumberInput value={config.sizingMaxEdge} step={1} suffix="pts"
-                onChange={(v) => void update('sizingMaxEdge', v)} />
-            </Field>
+            {config.sizingMode === 'fixed' ? (
+              <Field label="Fixed trade size" hint="Every trade risks this exact dollar amount.">
+                <NumberInput value={config.fixedTradeUsd} step={1} min={0} prefix="$"
+                  onChange={(v) => void update('fixedTradeUsd', v)} />
+              </Field>
+            ) : (
+              <>
+                <Field label="Base size">
+                  <PercentInput value={config.baseSizeFraction} step={0.5} min={0.1} max={100}
+                    onChange={(v) => void update('baseSizeFraction', v)} />
+                </Field>
+                <Field label="Min size">
+                  <PercentInput value={config.minSizeFraction} step={0.5} min={0.1} max={100}
+                    onChange={(v) => void update('minSizeFraction', v)} />
+                </Field>
+                <Field label="Max size">
+                  <PercentInput value={config.maxSizeFraction} step={0.5} min={0.1} max={100}
+                    onChange={(v) => void update('maxSizeFraction', v)} />
+                </Field>
+                <Field label="Sizing base edge">
+                  <NumberInput value={config.sizingBaseEdge} step={1} suffix="pts"
+                    onChange={(v) => void update('sizingBaseEdge', v)} />
+                </Field>
+                <Field label="Sizing max edge">
+                  <NumberInput value={config.sizingMaxEdge} step={1} suffix="pts"
+                    onChange={(v) => void update('sizingMaxEdge', v)} />
+                </Field>
+              </>
+            )}
             <Field label="Hard cap per trade">
               <NumberInput value={config.hardMaxPositionUsd} step={5} prefix="$"
                 onChange={(v) => void update('hardMaxPositionUsd', v)} />
             </Field>
             <Field label="Min cash reserve">
-              <NumberInput value={config.minCashReserveFraction} step={0.01} min={0} max={0.99}
+              <PercentInput value={config.minCashReserveFraction} step={1} min={0} max={99}
                 onChange={(v) => void update('minCashReserveFraction', v)} />
             </Field>
             <Field label="Max total exposure">
-              <NumberInput value={config.maxTotalExposureFraction} step={0.05} min={0} max={1}
+              <PercentInput value={config.maxTotalExposureFraction} step={5} min={0} max={100}
                 onChange={(v) => void update('maxTotalExposureFraction', v)} />
             </Field>
             <Field label="Starting bankroll" hint="0 = auto-detect from your first observed balance">
@@ -492,6 +557,15 @@ export function SettingsPage() {
       </Section>
 
       <DangerZone busy={busy} setBusy={setBusy} />
+      <NameDialog
+        open={saveOpen}
+        title="Save these settings as a profile"
+        label="Saves a snapshot of every knob below. It'll appear under Your Strategies."
+        placeholder="e.g. My small-balance sports config"
+        confirmLabel="Save"
+        onSubmit={(name) => void saveAsProfile(name)}
+        onClose={() => setSaveOpen(false)}
+      />
     </Page>
   );
 }

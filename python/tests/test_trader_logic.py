@@ -25,6 +25,21 @@ def test_size_interpolates_between_edges(cfg):
     assert trader._compute_position_usd(1000.0, 12.5, cfg) == pytest.approx(40.0)
 
 
+def test_fixed_sizing_returns_flat_amount_ignoring_balance_and_edge(cfg):
+    cfg["sizing_mode"] = "fixed"
+    cfg["fixed_trade_usd"] = 3.0
+    cfg["hard_max_position_usd"] = 50.0
+    assert trader._compute_position_usd(1000.0, 25.0, cfg) == 3.0
+    assert trader._compute_position_usd(5.0, -10.0, cfg) == 3.0
+
+
+def test_fixed_sizing_capped_by_hard_max(cfg):
+    cfg["sizing_mode"] = "fixed"
+    cfg["fixed_trade_usd"] = 100.0
+    cfg["hard_max_position_usd"] = 25.0
+    assert trader._compute_position_usd(1000.0, 10.0, cfg) == 25.0
+
+
 
 
 def test_signal_cost_whale_uses_taker_side_price():
@@ -100,6 +115,60 @@ def test_should_trade_per_source_whale_category_blocks(cfg):
         {"ticker": "X", "price": 0.60, "confidence": 70.0,
          "taker_side": "yes", "category": "sports"}, "whale", cfg)
     assert ok is False and "whale set" in reason
+
+
+def test_gambling_mode_hits_on_low_roll(cfg, monkeypatch):
+    cfg["gambling_mode"] = True
+    monkeypatch.setattr(trader.random, "random", lambda: 0.05)  # < 0.10
+    # a signal every normal gate would reject (junk confidence, excluded category)
+    sig = {"ticker": "X", "price": 0.95, "confidence": 1.0,
+           "taker_side": "yes", "category": "world"}
+    ok, reason = trader.should_trade(sig, "whale", cfg)
+    assert ok is True and "gambling" in reason and "HIT" in reason
+
+
+def test_gambling_mode_misses_on_high_roll(cfg, monkeypatch):
+    cfg["gambling_mode"] = True
+    monkeypatch.setattr(trader.random, "random", lambda: 0.5)  # >= 0.10
+    sig = {"ticker": "X", "price": 0.60, "confidence": 99.0,
+           "taker_side": "yes", "category": "sports"}
+    ok, reason = trader.should_trade(sig, "whale", cfg)
+    assert ok is False and "gambling" in reason and "no hit" in reason
+
+
+def test_balance_fetch_not_poisoned_by_concurrent_cred_test(monkeypatch):
+    import asyncio
+    import kalshi_auth
+
+    async def _bal():
+        return {"balance": 9999 if kalshi_auth.get_env() == "production" else 11,
+                "portfolio_value": 0}
+    monkeypatch.setattr(trader, "get_balance", _bal)
+    trader._balance_cache.clear()
+
+    async def scenario():
+        kalshi_auth.set_env("production")
+        released = asyncio.Event()
+
+        async def cred_test():  # mimics _h_testCredentials temporarily flipping env
+            async with kalshi_auth.ENV_LOCK:
+                kalshi_auth.set_env("demo")
+                await released.wait()
+                kalshi_auth.set_env("production")
+
+        t = asyncio.create_task(cred_test())
+        await asyncio.sleep(0)  # cred_test grabs the lock and flips env to demo
+        rb = asyncio.create_task(
+            trader.refresh_balance(merge_with_defaults({}), force=True))
+        await asyncio.sleep(0.05)
+        assert not rb.done()  # blocked on ENV_LOCK while env is temporarily demo
+        released.set()
+        cents, _ = await rb
+        await t
+        return cents
+
+    # Must return the production balance (9999), never demo's 11.
+    assert asyncio.run(scenario()) == 9999
 
 
 def test_should_trade_per_source_lets_each_source_keep_its_categories(cfg):

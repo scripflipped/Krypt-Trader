@@ -7,6 +7,7 @@ import { Area, AreaChart, Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YA
 import type { BotPosition, PnlPoint, SignalSource } from '@shared/types';
 import { useApp } from '../state/AppStateProvider';
 import { Card, Page, ShareButton } from '../components/common';
+import { RouletteWheel } from '../components/RouletteWheel';
 import { cls, fmtUsd } from '../utils/format';
 
 
@@ -35,8 +36,10 @@ const RESOLVE_FLY_MS = 2_500;
 const MAX_ORBS = 240;
 
 export function VisualizerPage() {
-  const { signals, positions, account, scannerStats } = useApp();
+  const { signals, positions, account, scannerStats, config } = useApp();
   const [running, setRunning] = useState(true);
+  const gambling = !!config?.gamblingMode;
+  const openCount = positions.filter((p) => !p.resolved).length;
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -417,6 +420,11 @@ export function VisualizerPage() {
         <div className="flex flex-col gap-2">
           <div ref={wrapperRef} className="relative h-[calc(100vh-280px)] min-h-[440px] overflow-hidden rounded-2xl border border-krypt-border bg-krypt-void">
             <canvas ref={canvasRef} className="absolute inset-0" />
+            {gambling && (
+              <div className="absolute inset-0 grid place-items-center bg-krypt-void/90 backdrop-blur-sm">
+                <RouletteWheel winSignal={openCount} />
+              </div>
+            )}
 
             { }
             <div className="pointer-events-none absolute right-3 top-3 flex flex-col gap-1 rounded-lg border border-krypt-border bg-krypt-void/80 px-3 py-2 text-[11px] text-krypt-muted backdrop-blur">

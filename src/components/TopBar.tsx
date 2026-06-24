@@ -1,15 +1,15 @@
-import { Pause, Play, Power, RefreshCw, Shield } from 'lucide-react';
+import { Pause, Play, Power, RefreshCw } from 'lucide-react';
 import { useApp } from '../state/AppStateProvider';
 import { useToast } from '../state/ToastProvider';
 import { ShareButton } from './common';
 import { cls, fmtPct, fmtUsd } from '../utils/format';
+import { computeTradeWarnings } from '../utils/warnings';
 
 export function TopBar() {
   const { config, account, backend, refresh } = useApp();
   const toast = useToast();
 
   const tradingOn = !!config?.enableTrading;
-  const dry = !!config?.dryRun;
 
   const toggle = async (): Promise<void> => {
     const next = !tradingOn;
@@ -19,11 +19,11 @@ export function TopBar() {
       return;
     }
     toast.success(next ? 'Trading enabled' : 'Trading paused');
-  };
-
-  const toggleDry = async (): Promise<void> => {
-    const r = await window.krypt.trading.setDryRun(!dry);
-    if (r.ok) toast.success(`Dry-run ${!dry ? 'on' : 'off'}`);
+    if (next && config) {
+      const blockers = computeTradeWarnings({ ...config, enableTrading: true }, account)
+        .filter((w) => w.severity === 'block');
+      if (blockers.length) toast.error(`Won't trade: ${blockers[0].message}`);
+    }
   };
 
   const restart = async (): Promise<void> => {
@@ -71,18 +71,6 @@ export function TopBar() {
             }
           />
         </div>
-
-        <button
-          onClick={toggleDry}
-          className={cls(
-            'krypt-btn-default',
-            dry && 'border-krypt-warn/50 bg-krypt-warn/10 text-krypt-warn',
-          )}
-          title={dry ? 'Dry-run is ON — orders are not sent' : 'Dry-run is OFF — orders are real'}
-        >
-          <Shield className="h-4 w-4" />
-          {dry ? 'Dry-Run' : 'Live'}
-        </button>
 
         <button
           onClick={restart}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import logging
@@ -167,6 +168,12 @@ _last_sync: float = 0.0
 _RESYNC_INTERVAL_SEC = 300
 
 _current_env: str = "production"
+
+# Held while the global env is temporarily flipped (e.g. testing the *other*
+# account's credentials) so concurrent balance fetches can't read — and cache —
+# the wrong environment's balance. Acquire around any temp env switch and around
+# every balance fetch (see trader.refresh_balance).
+ENV_LOCK = asyncio.Lock()
 
 
 def set_env(env: str) -> None:

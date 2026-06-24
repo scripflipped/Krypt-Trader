@@ -160,7 +160,7 @@ def _pos_to_js(r: dict) -> dict:
 
 
 
-async def _open_entry(a: dict, cfg: dict, env: str, live: bool, balance_usd: float) -> Optional[dict]:
+async def _open_entry(a: dict, cfg: dict, env: str, balance_usd: float) -> Optional[dict]:
     mode = (cfg.get("crypto15m_direction_mode") or "favorite").lower()
     favorite = a.get("favorite")
     fav_price = float(a.get("favoritePrice") or 0.0)
@@ -200,23 +200,6 @@ async def _open_entry(a: dict, cfg: dict, env: str, live: bool, balance_usd: flo
         "confidence": conf,
         "entry_delta_usd": a.get("deltaUsd"), "kalshi_env": env,
     }
-
-    if not live:
-        if style == "maker":
-            row.update({"status": "submitted", "dry_run": True})
-            with db.get_db() as conn:
-                pid = db.insert_crypto15m_position(conn, row)
-                logger.info(f"[paper] maker entry resting {a['asset']} {direction} x{order_size} @ {limit_cents}c")
-                return db.fetch_crypto15m_by_id(conn, pid)
-        row.update({
-            "status": "filled", "filled_contracts": order_size,
-            "avg_entry_cents": float(limit_cents),
-            "cost_usd": order_size * limit_cents / 100.0, "dry_run": True,
-        })
-        with db.get_db() as conn:
-            pid = db.insert_crypto15m_position(conn, row)
-            logger.info(f"[paper] entry {a['asset']} {direction} x{order_size} @ {limit_cents}c")
-            return db.fetch_crypto15m_by_id(conn, pid)
 
     try:
         resp = await kalshi_api.place_limit_order(
@@ -321,40 +304,6 @@ def _entry_expired(pos: dict, cfg: dict) -> bool:
         return False
     lead = max(0.0, float(cfg.get("crypto15m_maker_cancel_min", 0.0) or 0.0)) * 60.0
     return datetime.now(timezone.utc).timestamp() >= close_epoch - lead
-
-
-async def _paper_poll_entry(pos: dict, cfg: dict) -> Optional[dict]:
-    pid = pos["id"]
-    limit_cents = int(pos.get("entry_limit_cents") or 0)
-    direction = pos.get("direction")
-    target = int(pos.get("target_contracts") or 0)
-    try:
-        m = await kalshi_api.fetch_market(pos["ticker"])
-    except Exception:
-        m = None
-
-    if m and trader._market_yes_payout(m) is None and target > 0:
-        yes_bid = crypto15m._price_dollars(m, "yes_bid")
-        yes_ask = crypto15m._price_dollars(m, "yes_ask")
-        if direction == "yes":
-            side_ask = yes_ask
-        else:
-            side_ask = crypto15m._price_dollars(m, "no_ask") or (1.0 - yes_bid if yes_bid else 0.0)
-        if side_ask and side_ask * 100.0 <= limit_cents + 1e-9:
-            with db.get_db() as conn:
-                db.update_crypto15m_position(
-                    conn, pid, status="filled", filled_contracts=target,
-                    avg_entry_cents=float(limit_cents),
-                    cost_usd=target * limit_cents / 100.0,
-                )
-                logger.info(f"[paper] maker entry filled {pos['asset']} x{target} @ {limit_cents}c")
-                return db.fetch_crypto15m_by_id(conn, pid)
-
-    if _entry_expired(pos, cfg) or (m and trader._market_yes_payout(m) is not None):
-        with db.get_db() as conn:
-            _mark_resolved(conn, pid, status="canceled", exit_reason="unfilled_expired")
-            return db.fetch_crypto15m_by_id(conn, pid)
-    return None
 
 
 async def _place_stop_loss(pos: dict, market: Optional[dict], cfg: dict) -> Optional[dict]:
@@ -463,12 +412,19 @@ async def _settle_if_closed(pos: dict) -> Optional[dict]:
         return db.fetch_crypto15m_by_id(conn, pos["id"])
 
 
-async def _manage_position(pos: dict, cfg: dict, env: str, live: bool) -> Optional[dict]:
+async def _manage_position(pos: dict, cfg: dict, env: str) -> Optional[dict]:
     status = pos.get("status")
 
+    if pos.get("dry_run"):
+        # Legacy simulated position from the removed paper engine — retire it
+        # so it stops showing as open. No real order ever backed it.
+        with db.get_db() as conn:
+            _mark_resolved(
+                conn, pos["id"], status="canceled", exit_reason="unfilled_expired"
+            )
+            return db.fetch_crypto15m_by_id(conn, pos["id"])
+
     if status == "submitted":
-        if pos.get("dry_run"):
-            return await _paper_poll_entry(pos, cfg)
         return await _poll_entry(pos, cfg)
     if status == "exiting":
         row = await _poll_exit(pos)
@@ -486,7 +442,6 @@ async def _manage_position(pos: dict, cfg: dict, env: str, live: bool) -> Option
     direction = pos["direction"]
     filled = int(pos.get("filled_contracts") or 0)
     cost_usd = float(pos.get("cost_usd") or 0.0)
-    is_dry = bool(pos.get("dry_run"))
 
     try:
         market = await kalshi_api.fetch_market(pos["ticker"])
@@ -509,18 +464,6 @@ async def _manage_position(pos: dict, cfg: dict, env: str, live: bool) -> Option
 
     side_prob = side_prob_from_market(market, direction)
     if should_stop_loss(pos, side_prob, cfg):
-        if not live or is_dry:
-            proceeds = filled * float(side_prob)
-            pnl = proceeds - cost_usd
-            with db.get_db() as conn:
-                _mark_resolved(
-                    conn, pid, status="exited", exit_reason="stop_loss",
-                    proceeds_usd=proceeds, exit_filled_contracts=filled,
-                    exit_limit_cents=int(round(side_prob * 100)),
-                    pnl_usd=pnl, outcome_correct=1 if pnl > 0 else 0,
-                )
-                logger.info(f"[paper] STOP-LOSS {pos['asset']} pnl=${pnl:+.2f}")
-                return db.fetch_crypto15m_by_id(conn, pid)
         return await _place_stop_loss(pos, market, cfg)
 
     return None
@@ -547,11 +490,16 @@ async def run_tick(cfg: dict, *, authed: bool) -> list[dict]:
 
     for pos in open_positions:
         try:
-            row = await _manage_position(pos, cfg, env, live)
+            row = await _manage_position(pos, cfg, env)
             if row:
                 updated.append(row)
         except Exception as e:
             logger.warning(f"[crypto15m] manage {pos.get('asset')} failed: {e}")
+
+    # Entries only happen on a live (production) account — paper simulation was
+    # removed, so demo/unarmed runs monitor existing positions but open nothing.
+    if not live:
+        return updated
 
     need_balance = (
         (cfg.get("crypto15m_sizing_mode") or "fixed").lower() == "balance_pct"
@@ -568,7 +516,7 @@ async def run_tick(cfg: dict, *, authed: bool) -> list[dict]:
         if not ok:
             continue
         try:
-            row = await _open_entry(a, cfg, env, live, balance_usd)
+            row = await _open_entry(a, cfg, env, balance_usd)
             if row:
                 updated.append(row)
                 open_count += 1

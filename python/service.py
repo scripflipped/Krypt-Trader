@@ -699,7 +699,6 @@ async def _h_setConfig(p: dict) -> dict:
     STATE.cfg = cfg
     logger.info(
         f"setConfig applied: enable_trading={cfg.get('enable_trading')} "
-        f"dry_run={cfg.get('dry_run')} "
         f"trade_whales={cfg.get('trade_whales')} "
         f"trade_momentum={cfg.get('trade_momentum')} "
         f"max_open={cfg.get('max_open_positions')} "
@@ -787,20 +786,23 @@ async def _h_testCredentials(p: dict) -> dict:
         raise RuntimeError(f"credentials not set for {target_env}")
 
     saved_env = kalshi_auth.get_env()
-    if target_env != saved_env:
-        kalshi_auth.set_env(target_env)
-    kalshi_auth.reset_credential_cache()
-    try:
-        kalshi_auth.prime_credentials(sync_time=True)
-        bal = await kalshi_api.get_balance()
-    finally:
+    # Hold the env lock so the account poller / trade loop can't fetch a balance
+    # while we've temporarily flipped the global env to the other account.
+    async with kalshi_auth.ENV_LOCK:
         if target_env != saved_env:
-            kalshi_auth.set_env(saved_env)
-            kalshi_auth.reset_credential_cache()
-            try:
-                kalshi_auth.prime_credentials(sync_time=False)
-            except Exception:
-                pass
+            kalshi_auth.set_env(target_env)
+        kalshi_auth.reset_credential_cache()
+        try:
+            kalshi_auth.prime_credentials(sync_time=True)
+            bal = await kalshi_api.get_balance()
+        finally:
+            if target_env != saved_env:
+                kalshi_auth.set_env(saved_env)
+                kalshi_auth.reset_credential_cache()
+                try:
+                    kalshi_auth.prime_credentials(sync_time=False)
+                except Exception:
+                    pass
     cents = int(bal.get("balance", 0))
     if target_env == saved_env:
         STATE.auth_ok = True

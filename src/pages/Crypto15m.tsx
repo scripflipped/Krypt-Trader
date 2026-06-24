@@ -97,14 +97,14 @@ export function Crypto15mPage() {
   const isLive = !!status?.live;
   const authed = !!status?.authed;
   const liveSupported = status?.liveSupported ?? true;
-  const mode: 'OFF' | 'PAPER' | 'LIVE' = !enabled ? 'OFF' : isLive ? 'LIVE' : 'PAPER';
+  const mode: 'OFF' | 'MONITOR' | 'LIVE' = !enabled ? 'OFF' : isLive ? 'LIVE' : 'MONITOR';
   const openPos = status?.open ?? [];
   const recentPos = (status?.recent ?? []).filter((p) => p.resolved);
 
   return (
     <Page
       title="15m Crypto"
-      subtitle="Kalshi 15-minute crypto markets. A configurable momentum strategy — tune the entry window, favorite threshold, delta filter, and stop-loss below."
+      subtitle="Kalshi 15-minute crypto markets. Experimental — favorite-follow has no proven edge at any threshold (its return ≈ win-rate − price), so treat it as for-fun and test on Demo first. Tune the entry window, favorite threshold, delta filter, and stop-loss below."
       actions={
         <button
           onClick={() => void load()}
@@ -127,8 +127,8 @@ export function Crypto15mPage() {
               description={
                 mode === 'LIVE'
                   ? 'LIVE — placing real orders on your Kalshi account.'
-                  : mode === 'PAPER'
-                    ? 'Paper mode — simulating fills against real prices (no orders placed).'
+                  : mode === 'MONITOR'
+                    ? 'Monitor only — tracking signals but not placing orders (needs a live production account).'
                     : 'Off — monitor only.'
               }
             />
@@ -160,20 +160,19 @@ export function Crypto15mPage() {
         {enabled && !liveSupported && (
           <div className="mt-2 text-[11px] text-krypt-warn">
             Kalshi's <span className="text-krypt-muted">demo</span> exchange doesn't carry the 15-minute crypto
-            markets, so real orders can't be placed here. On demo this runs in
-            <span className="text-krypt-muted"> paper mode</span> (simulated against real prices) — switch to a
+            markets, so orders can't be placed here — this just monitors. Switch to a
             <span className="text-krypt-muted"> Live</span> account in Settings to trade them for real.
           </div>
         )}
         {enabled && liveSupported && liveArmed && !authed && (
           <div className="mt-2 text-[11px] text-krypt-warn">
-            Live is armed but Kalshi isn't connected — paper-trading until you connect your account in
+            Live is armed but Kalshi isn't connected — not trading until you connect your account in
             <span className="text-krypt-muted"> Settings → Credentials</span>.
           </div>
         )}
         {enabled && liveSupported && !liveArmed && (
           <div className="mt-2 text-[11px] text-krypt-dim">
-            Paper mode. Flip <span className="text-krypt-muted">Real orders (LIVE)</span> to trade your Kalshi
+            Monitor only. Flip <span className="text-krypt-muted">Real orders (LIVE)</span> to trade your Kalshi
             balance — no other settings needed.
           </div>
         )}
@@ -216,11 +215,11 @@ export function Crypto15mPage() {
   );
 }
 
-function ModePill({ mode }: { mode: 'OFF' | 'PAPER' | 'LIVE' }) {
+function ModePill({ mode }: { mode: 'OFF' | 'MONITOR' | 'LIVE' }) {
   const sty =
     mode === 'LIVE'
       ? 'border-krypt-loss/50 bg-krypt-loss/15 text-krypt-loss'
-      : mode === 'PAPER'
+      : mode === 'MONITOR'
         ? 'border-krypt-warn/50 bg-krypt-warn/15 text-krypt-warn'
         : 'border-krypt-border bg-krypt-surface2 text-krypt-muted';
   return (
@@ -245,7 +244,7 @@ function KV({ label, value, accent }: { label: string; value: string; accent?: '
 const C15_DEFAULTS = {
   directionMode: 'favorite' as 'favorite' | 'contrarian',
   timeDelayMin: 8,
-  entryThreshold: 0.95,
+  entryThreshold: 0.70,
   entryMax: 0.98,
   exitThreshold: 0.4,
   minDeltaPct: 0,

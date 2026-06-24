@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 import uuid
 from datetime import datetime, timezone
@@ -13,7 +14,7 @@ from kalshi_api import (
     get_fills_for_order, get_order, get_orderbook, get_positions,
     place_limit_order,
 )
-from kalshi_auth import get_env
+from kalshi_auth import ENV_LOCK, get_env
 
 logger = logging.getLogger(__name__)
 
@@ -23,28 +24,38 @@ _balance_cache: dict[str, dict] = {}
 
 
 async def refresh_balance(cfg: dict, force: bool = False) -> tuple[int, int]:
-    env = get_env()
     interval = float(cfg.get("balance_poll_interval", 60))
     loop = asyncio.get_event_loop()
     now = loop.time()
-    cached = _balance_cache.get(env)
-    if not force and cached and (now - cached["at"]) < interval:
-        return cached["cents"], cached["portfolio_cents"]
-    try:
-        data = await get_balance()
-        cents = int(data.get("balance", 0))
-        port = int(data.get("portfolio_value", 0))
-        _balance_cache[env] = {"cents": cents, "portfolio_cents": port, "at": now}
-        return cents, port
-    except Exception as e:
-        logger.warning(f"balance fetch failed: {e}")
+    # Hold the env lock across read-env → fetch → cache so a concurrent
+    # credential test (which briefly flips the global env) can't make us fetch
+    # the other account's balance and cache it under this env. Without this the
+    # displayed balance flickers between demo and production.
+    async with ENV_LOCK:
+        env = get_env()
         cached = _balance_cache.get(env)
-        return (cached["cents"], cached["portfolio_cents"]) if cached else (0, 0)
+        if not force and cached and (now - cached["at"]) < interval:
+            return cached["cents"], cached["portfolio_cents"]
+        try:
+            data = await get_balance()
+            cents = int(data.get("balance", 0))
+            port = int(data.get("portfolio_value", 0))
+            _balance_cache[env] = {"cents": cents, "portfolio_cents": port, "at": now}
+            return cents, port
+        except Exception as e:
+            logger.warning(f"balance fetch failed: {e}")
+            cached = _balance_cache.get(env)
+            return (cached["cents"], cached["portfolio_cents"]) if cached else (0, 0)
 
 
 
 
 def _compute_position_usd(balance_usd: float, edge_pts: float, cfg: dict) -> float:
+    if cfg.get("sizing_mode") == "fixed":
+        return min(
+            float(cfg.get("fixed_trade_usd", 5.0) or 0.0),
+            float(cfg["hard_max_position_usd"]),
+        )
     lo_e = float(cfg["sizing_base_edge"])
     hi_e = float(cfg["sizing_max_edge"])
     lo_f = float(cfg["min_size_fraction"])
@@ -134,6 +145,15 @@ def _compute_edge(signal: dict, source: str) -> float:
 
 
 def should_trade(signal: dict, source: str, cfg: dict) -> tuple[bool, str]:
+    # "Secret Strategy" — pure gambling. Ignore every gate (confidence, edge,
+    # category, price); each fresh signal just gets a flat random roll.
+    if cfg.get("gambling_mode"):
+        prob = float(cfg.get("gambling_trade_probability", 0.10) or 0.0)
+        pct = int(round(prob * 100))
+        if random.random() < prob:
+            return True, f"\U0001F3B0 gambling: HIT ({pct}%)"
+        return False, f"\U0001F3B0 gambling: no hit ({pct}%)"
+
     conf = float(signal.get("confidence") or 0.0)
     edge = _compute_edge(signal, source)
 
@@ -333,7 +353,7 @@ async def execute_signal(
         "cost_usd": 0.0,
         "client_order_id": client_order_id,
         "kalshi_order_id": None,
-        "status": "dry_run" if cfg.get("dry_run") else "submitted",
+        "status": "submitted",
         "confidence": signal.get("confidence", 0.0),
         "edge_pts": edge_pts,
         "signal_price": (signal.get("price") or 0.0) * 100,
@@ -341,12 +361,9 @@ async def execute_signal(
         "kalshi_env": env,
     }
 
-    if cfg.get("dry_run") or not cfg.get("enable_trading"):
-        with db.get_db() as conn:
-            pid = db.insert_bot_position(conn, row)
-            db.log_event(conn, pid, "placed", note="dry_run")
-            inserted = db.fetch_position_by_id(conn, pid)
-        return inserted
+    if not cfg.get("enable_trading"):
+        logger.info(f"[skip] {signal['ticker']}: trading disabled (enable_trading off)")
+        return None
 
     try:
         resp = await place_limit_order(

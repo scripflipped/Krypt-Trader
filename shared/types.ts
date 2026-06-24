@@ -8,7 +8,6 @@ export type SignalSource = 'whale' | 'momentum' | 'convergence' | 'external';
 
 export interface TraderConfig {
   kalshiEnv: KalshiEnv;
-  dryRun: boolean;
   enableTrading: boolean;
 
   tradeWhales: boolean;
@@ -27,6 +26,12 @@ export interface TraderConfig {
   allowedMomentumCategories: string[] | null;
   contrarianOnly: boolean;
 
+  /** "Secret Strategy" gambling mode: ignore all gates, trade each fresh signal at gamblingTradeProbability. */
+  gamblingMode: boolean;
+  gamblingTradeProbability: number;
+
+  sizingMode: 'percent' | 'fixed';
+  fixedTradeUsd: number;
   baseSizeFraction: number;
   minSizeFraction: number;
   maxSizeFraction: number;
@@ -325,6 +330,8 @@ export interface StrategyPreset {
   riskLabel: 'safe' | 'balanced' | 'aggressive' | 'experimental';
   badge?: 'recommended' | 'new' | 'soon' | null;
   comingSoon?: boolean;
+  /** Hidden "Secret Strategy" — shown via the rainbow button, not the ranked grid. */
+  secret?: boolean;
   backtest?: {
     netCents: number;
     t: number;
@@ -480,6 +487,7 @@ export interface KryptApi {
     save: (name: string, description?: string) => Promise<ActionResult<Profile>>;
     apply: (id: string) => Promise<ActionResult<TraderConfig>>;
     rename: (id: string, name: string) => Promise<ActionResult>;
+    update: (id: string) => Promise<ActionResult<Profile>>;
     delete: (id: string) => Promise<ActionResult>;
     duplicate: (id: string) => Promise<ActionResult<Profile>>;
     export: (id: string) => Promise<ActionResult<string>>;
@@ -512,7 +520,6 @@ export interface KryptApi {
   };
   trading: {
     setEnabled: (enabled: boolean) => Promise<ActionResult>;
-    setDryRun: (dry: boolean) => Promise<ActionResult>;
     cancelAllOpen: () => Promise<ActionResult<{ canceled: number }>>;
     flatten: () => Promise<ActionResult<{ closed: number }>>;
   };

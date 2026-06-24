@@ -108,7 +108,7 @@ export function Sidebar({ page, setPage }: SidebarProps) {
             cash {fmtUsd(account?.cashUsd)} · port {fmtUsd(account?.portfolioUsd)}
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-krypt-muted">
-            <span>{config?.dryRun ? 'DRY-RUN' : (config?.enableTrading ? 'LIVE' : 'PAUSED')}</span>
+            <span>{config?.enableTrading ? (config?.kalshiEnv === 'production' ? 'LIVE' : 'DEMO') : 'PAUSED'}</span>
             <span className={cls(
               'h-1.5 w-1.5 rounded-full',
               backend.status === 'running' ? 'bg-krypt-win' : 'bg-krypt-warn',

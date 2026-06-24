@@ -10,7 +10,6 @@ const settingsFile = (): string => join(userDataDir(), 'settings.json');
 
 export const DEFAULT_CONFIG: TraderConfig = {
   kalshiEnv: 'demo',
-  dryRun: true,
   enableTrading: false,
 
   tradeWhales: true,
@@ -29,6 +28,11 @@ export const DEFAULT_CONFIG: TraderConfig = {
   allowedMomentumCategories: null,
   contrarianOnly: true,
 
+  gamblingMode: false,
+  gamblingTradeProbability: 0.10,
+
+  sizingMode: 'percent',
+  fixedTradeUsd: 5,
   baseSizeFraction: 0.03,
   minSizeFraction: 0.02,
   maxSizeFraction: 0.06,
@@ -91,7 +95,7 @@ export const DEFAULT_CONFIG: TraderConfig = {
   crypto15mMaxConcurrent: 7,
   crypto15mDirectionMode: 'favorite',
   crypto15mTimeDelayMin: 8,
-  crypto15mEntryThreshold: 0.95,
+  crypto15mEntryThreshold: 0.70,
   crypto15mEntryMax: 0.98,
   crypto15mExitThreshold: 0.4,
   crypto15mMinDeltaPct: 0,

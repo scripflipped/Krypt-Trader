@@ -59,7 +59,7 @@ export function OnboardingModal({ onDone }: { onDone: () => void }) {
               <ol className="list-decimal space-y-2 pl-4 text-sm text-krypt-muted">
                 <li>Create a Kalshi API key + RSA private key in your account settings.</li>
                 <li>Paste both into the API Keys page (we&apos;ll send you there).</li>
-                <li>Pick a strategy preset (start with <span className="text-white">Krypt Balanced</span>).</li>
+                <li>Pick a strategy preset (start with <span className="text-white">Edge Stack</span>).</li>
                 <li>Verify the connection &amp; balance, then unpause trading.</li>
                 <li>Tweak knobs in Settings — everything is live-editable.</li>
               </ol>
@@ -79,11 +79,13 @@ export function OnboardingModal({ onDone }: { onDone: () => void }) {
                 <ExternalLink className="h-4 w-4 text-krypt-muted" />
               </button>
               <div className="rounded-lg border border-krypt-warn/40 bg-krypt-warn/5 p-3 text-xs text-krypt-warn">
-                Default config starts in <strong>DEMO + DRY-RUN</strong>, so the main bot
-                can&apos;t place real orders until you switch to production and turn both
-                off. <strong>One exception:</strong> the 15-minute crypto tab has its own
-                independent <strong>LIVE</strong> switch that trades on whatever Kalshi
-                environment you&apos;re connected to — leave it off unless you mean it.
+                You start on the <strong>DEMO</strong> environment — the bot trades Kalshi&apos;s
+                play-money sandbox until you switch to <strong>Production</strong> in Settings.
+                Fund at least <strong>$25</strong> before going live: on smaller balances the
+                default 2–6% sizing falls under the <strong>$1-per-order minimum</strong> and the
+                bot won&apos;t place anything. (The 15-minute crypto tab has its own{' '}
+                <strong>LIVE</strong> switch and only trades on a Production account — leave it off
+                unless you mean it.)
               </div>
             </div>
           )}
@@ -97,8 +99,8 @@ export function OnboardingModal({ onDone }: { onDone: () => void }) {
                   Auto-trading involves risk; all P&amp;L is your own. We make no
                   guarantee of profitability. You are solely responsible for
                   compliance with Kalshi&apos;s terms of service and applicable
-                  law in your jurisdiction. Always paper-trade or use the demo
-                  environment before going live.
+                  law in your jurisdiction. Always use the demo environment
+                  before going live.
                 </div>
               </div>
               <label className="flex items-start gap-3 rounded-lg border border-krypt-border bg-krypt-surface2 p-3">

@@ -1,23 +1,25 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import {
   Check, Copy, Download, FolderOpen, FolderPlus, Pencil, Trash2, Upload,
 } from 'lucide-react';
 import { useApp } from '../state/AppStateProvider';
 import { useToast } from '../state/ToastProvider';
-import { Empty, Page } from '../components/common';
+import { Empty, NameDialog, Page } from '../components/common';
 import { cls, fmtDateTime } from '../utils/format';
+import type { Profile } from '@shared/types';
 
 export function ProfilesPage() {
   const { state, refresh } = useApp();
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<Profile | null>(null);
 
   const profiles = state?.customProfiles ?? [];
   const activeId = state?.activeProfileId ?? null;
 
-  const create = async (): Promise<void> => {
-    const name = window.prompt('New profile name (snapshot of current settings):')?.trim();
-    if (!name) return;
+  const create = async (name: string): Promise<void> => {
+    setCreateOpen(false);
     const r = await window.krypt.profiles.save(name);
     if (r.ok) {
       toast.success(r.message || 'Saved');
@@ -25,10 +27,11 @@ export function ProfilesPage() {
     } else toast.error(r.message || 'Failed to save');
   };
 
-  const rename = async (id: string, oldName: string): Promise<void> => {
-    const name = window.prompt('Rename profile:', oldName)?.trim();
-    if (!name || name === oldName) return;
-    const r = await window.krypt.profiles.rename(id, name);
+  const rename = async (name: string): Promise<void> => {
+    const target = renameTarget;
+    setRenameTarget(null);
+    if (!target || name === target.name) return;
+    const r = await window.krypt.profiles.rename(target.id, name);
     if (r.ok) {
       toast.success('Renamed');
       await refresh.state();
@@ -112,7 +115,7 @@ export function ProfilesPage() {
           <button onClick={importClick} className="krypt-btn-default">
             <Upload className="h-4 w-4" /> Import
           </button>
-          <button onClick={create} className="krypt-btn-primary">
+          <button onClick={() => setCreateOpen(true)} className="krypt-btn-primary">
             <FolderPlus className="h-4 w-4" /> New from current settings
           </button>
         </>
@@ -123,7 +126,7 @@ export function ProfilesPage() {
           title="No profiles yet"
           description="Save the current settings as a profile, or start with a Strategy preset."
           action={
-            <button onClick={create} className="krypt-btn-primary">
+            <button onClick={() => setCreateOpen(true)} className="krypt-btn-primary">
               <FolderPlus className="h-4 w-4" /> Save current as profile
             </button>
           }
@@ -177,7 +180,7 @@ export function ProfilesPage() {
                       <Check className="h-3 w-3" /> Active
                     </span>
                   )}
-                  <button onClick={() => rename(p.id, p.name)} className="krypt-btn-ghost text-xs">
+                  <button onClick={() => setRenameTarget(p)} className="krypt-btn-ghost text-xs">
                     <Pencil className="h-3.5 w-3.5" /> Rename
                   </button>
                   <button onClick={() => duplicate(p.id)} className="krypt-btn-ghost text-xs">
@@ -195,6 +198,24 @@ export function ProfilesPage() {
           })}
         </div>
       )}
+
+      <NameDialog
+        open={createOpen}
+        title="New profile from current settings"
+        label="Saves a snapshot of your current trader config."
+        placeholder="Profile name"
+        confirmLabel="Save"
+        onSubmit={(name) => void create(name)}
+        onClose={() => setCreateOpen(false)}
+      />
+      <NameDialog
+        open={renameTarget !== null}
+        title="Rename profile"
+        initialValue={renameTarget?.name ?? ''}
+        confirmLabel="Rename"
+        onSubmit={(name) => void rename(name)}
+        onClose={() => setRenameTarget(null)}
+      />
     </Page>
   );
 }

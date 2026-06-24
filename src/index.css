@@ -84,6 +84,12 @@ button {
   .krypt-btn-ghost {
     @apply krypt-btn border-transparent bg-transparent hover:bg-white/5;
   }
+  .krypt-btn-rainbow {
+    @apply krypt-btn border-transparent font-semibold text-white shadow-krypt-soft hover:shadow-krypt-strong;
+    background-image: linear-gradient(90deg, #ff4d6d, #ff9e00, #ffe600, #38f59b, #2bd6ff, #8b5cf6, #ff4d6d);
+    background-size: 300% 100%;
+    animation: krypt-rainbow 5s linear infinite;
+  }
   .krypt-pill {
     @apply inline-flex items-center gap-1 rounded-full border border-krypt-border bg-krypt-surface2 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider;
   }
@@ -102,4 +108,9 @@ button {
   .krypt-table tr:hover td {
     @apply bg-white/[0.02];
   }
+}
+
+@keyframes krypt-rainbow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
 }

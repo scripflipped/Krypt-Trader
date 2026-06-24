@@ -102,7 +102,11 @@ export function registerIpc(): void {
   ipcMain.handle('config:applyStrategy', async (_e, id: string) => {
     const s = findStrategy(id);
     if (!s || s.comingSoon) return store.get().config;
-    const next = store.replaceConfig({ ...s.config });
+    const curCfg = store.get().config;
+    // Applying a strategy must NOT change the environment or master kill-switch.
+    const next = store.replaceConfig({
+      ...s.config, kalshiEnv: curCfg.kalshiEnv, enableTrading: curCfg.enableTrading,
+    });
     const stateNext = store.save({ ...store.get(), activeProfileId: id });
     broadcastState(stateNext);
     await pushConfigToBackend();
@@ -137,7 +141,9 @@ export function registerIpc(): void {
       const s = findStrategy(id);
       if (s?.comingSoon) return err(`"${s.name}" is coming soon`);
       if (s) {
-        const next = store.replaceConfig({ ...s.config });
+        const next = store.replaceConfig({
+          ...s.config, kalshiEnv: cur.config.kalshiEnv, enableTrading: cur.config.enableTrading,
+        });
         const stateNext = store.save({ ...store.get(), activeProfileId: id });
         broadcastState(stateNext);
         await pushConfigToBackend();
@@ -145,7 +151,9 @@ export function registerIpc(): void {
       }
       return err('Profile not found');
     }
-    const next = store.replaceConfig({ ...p.config });
+    const next = store.replaceConfig({
+      ...p.config, kalshiEnv: cur.config.kalshiEnv, enableTrading: cur.config.enableTrading,
+    });
     const stateNext = store.save({ ...store.get(), activeProfileId: id });
     broadcastState(stateNext);
     await pushConfigToBackend();
@@ -161,6 +169,20 @@ export function registerIpc(): void {
     const next = store.save({ ...cur, customProfiles: updated });
     broadcastState(next);
     return ok();
+  });
+  ipcMain.handle('profiles:update', (_e, id: string) => {
+    const cur = store.get();
+    const idx = cur.customProfiles.findIndex((p) => p.id === id);
+    if (idx < 0) return err('Profile not found');
+    const updated = [...cur.customProfiles];
+    updated[idx] = {
+      ...updated[idx],
+      config: { ...cur.config },
+      updatedAt: new Date().toISOString(),
+    };
+    const next = store.save({ ...cur, customProfiles: updated });
+    broadcastState(next);
+    return ok(updated[idx]);
   });
   ipcMain.handle('profiles:delete', (_e, id: string) => {
     const cur = store.get();
@@ -298,12 +320,6 @@ export function registerIpc(): void {
 
   ipcMain.handle('trading:setEnabled', async (_e, enabled: boolean) => {
     const next = store.patchConfig({ enableTrading: !!enabled });
-    broadcastState(next);
-    await pushConfigToBackend();
-    return ok();
-  });
-  ipcMain.handle('trading:setDryRun', async (_e, dry: boolean) => {
-    const next = store.patchConfig({ dryRun: !!dry });
     broadcastState(next);
     await pushConfigToBackend();
     return ok();

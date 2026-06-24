@@ -100,8 +100,8 @@ export function AboutPage() {
             contracts is risky. Krypt makes no guarantee of profitability and accepts
             no liability for any losses incurred while using this tool. You are
             responsible for complying with Kalshi&apos;s terms of service and any
-            applicable laws in your jurisdiction. Always paper-trade (demo + dry-run)
-            until you trust your config.
+            applicable laws in your jurisdiction. Always test on the demo
+            environment until you trust your config.
           </p>
         </Card>
       </Section>

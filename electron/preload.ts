@@ -42,6 +42,7 @@ const api: KryptApi = {
     save: (name, description) => ipcRenderer.invoke('profiles:save', name, description),
     apply: (id) => ipcRenderer.invoke('profiles:apply', id),
     rename: (id, name) => ipcRenderer.invoke('profiles:rename', id, name),
+    update: (id) => ipcRenderer.invoke('profiles:update', id),
     delete: (id) => ipcRenderer.invoke('profiles:delete', id),
     duplicate: (id) => ipcRenderer.invoke('profiles:duplicate', id),
     export: (id) => ipcRenderer.invoke('profiles:export', id),
@@ -66,7 +67,6 @@ const api: KryptApi = {
   trading: {
     setEnabled: (v: boolean): Promise<ActionResult> =>
       ipcRenderer.invoke('trading:setEnabled', v),
-    setDryRun: (v) => ipcRenderer.invoke('trading:setDryRun', v),
     cancelAllOpen: () => ipcRenderer.invoke('trading:cancelAllOpen'),
     flatten: () => ipcRenderer.invoke('trading:flatten'),
   },

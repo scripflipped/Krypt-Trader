@@ -40,9 +40,15 @@ def cfg():
     c = merge_with_defaults({})
     c["kalshi_env"] = "demo"
     c["crypto15m_enabled"] = True
-    c["dry_run"] = True
     c["crypto15m_entry_style"] = "taker"
     return c
+
+
+def _live_cfg(cfg):
+    """Production + armed: the only mode that places 15m orders now that paper is gone."""
+    cfg["kalshi_env"] = "production"
+    cfg["crypto15m_live"] = True
+    return cfg
 
 
 def run_async(coro):
@@ -130,17 +136,25 @@ def test_compute_entry_contracts_max_loss_cap(cfg):
     assert ct.compute_entry_contracts(cfg, entry_limit_cents=90, balance_usd=10, order_size=5) == 0
 
 
-def test_balance_pct_entry_sizes_the_paper_position(fresh_db, env_demo, cfg, monkeypatch):
+def test_balance_pct_entry_sizes_the_live_order(fresh_db, env_prod, cfg, monkeypatch):
+    _live_cfg(cfg)
     cfg["crypto15m_sizing_mode"] = "balance_pct"
     cfg["crypto15m_balance_pct"] = 0.10
-    cfg["start_bankroll_usd"] = 100.0
+
+    async def _bank(_cfg, _authed):
+        return 100.0
+    monkeypatch.setattr(ct, "_bankroll_usd", _bank)
     monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
-    run_async(ct.run_tick(cfg, authed=False))
+    calls = _capture_orders(monkeypatch)
+
+    run_async(ct.run_tick(cfg, authed=True))
+
+    assert len(calls) == 1
+    assert calls[0]["count"] == 11
     with db.get_db() as conn:
-        r = db.get_open_crypto15m(conn, "demo")[0]
+        r = db.get_open_crypto15m(conn, "production")[0]
     assert r["target_contracts"] == 11
-    assert r["filled_contracts"] == 11
-    assert r["cost_usd"] == pytest.approx(11 * 0.88)
+    assert r["status"] == "submitted"
 
 
 
@@ -154,77 +168,39 @@ def test_disabled_does_nothing(fresh_db, env_demo, cfg, monkeypatch):
         assert db.count_open_crypto15m(conn, "demo") == 0
 
 
-def test_paper_entry_creates_filled_position(fresh_db, env_demo, cfg, monkeypatch):
+def test_demo_opens_no_positions(fresh_db, env_demo, cfg, monkeypatch):
+    # Demo can't trade 15m markets and paper simulation was removed, so a
+    # signal on demo opens nothing — the executor only monitors.
     monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
-    run_async(ct.run_tick(cfg, authed=False))
+    out = run_async(ct.run_tick(cfg, authed=True))
+    assert out == []
     with db.get_db() as conn:
-        rows = db.get_open_crypto15m(conn, "demo")
-    assert len(rows) == 1
-    r = rows[0]
-    assert r["asset"] == "BTC"
-    assert r["direction"] == "yes"
-    assert r["status"] == "filled"
-    assert r["dry_run"] == 1
-    assert r["filled_contracts"] == 1
-    assert r["entry_limit_cents"] == 88
-    assert r["cost_usd"] == pytest.approx(0.88)
+        assert db.count_open_crypto15m(conn, "demo") == 0
 
 
-def test_paper_entry_then_stop_loss_exit(fresh_db, env_demo, cfg, monkeypatch):
+def test_one_position_per_asset(fresh_db, env_prod, cfg, monkeypatch):
+    _live_cfg(cfg)
     monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
-    run_async(ct.run_tick(cfg, authed=False))
-
-    async def _low(_ticker):
-        return {"yes_bid_dollars": 0.29, "yes_ask_dollars": 0.31, "status": "open", "result": ""}
-    monkeypatch.setattr(kalshi_api, "fetch_market", _low)
-
-    run_async(ct.run_tick(cfg, authed=False))
-    with db.get_db() as conn:
-        r = dict(conn.execute("SELECT * FROM crypto15m_positions WHERE asset='BTC'").fetchone())
-    assert r["resolved"] == 1
-    assert r["status"] == "exited"
-    assert r["exit_reason"] == "stop_loss"
-    assert r["outcome_correct"] == 0
-    assert r["pnl_usd"] == pytest.approx(0.30 - 0.88)
-
-
-def test_paper_entry_then_settlement_win(fresh_db, env_demo, cfg, monkeypatch):
-    monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
-    run_async(ct.run_tick(cfg, authed=False))
-
-    async def _settled(_ticker):
-        return {"result": "yes", "status": "finalized"}
-    monkeypatch.setattr(kalshi_api, "fetch_market", _settled)
-
-    run_async(ct.run_tick(cfg, authed=False))
-    with db.get_db() as conn:
-        r = dict(conn.execute("SELECT * FROM crypto15m_positions WHERE asset='BTC'").fetchone())
-    assert r["resolved"] == 1
-    assert r["status"] == "settled"
-    assert r["outcome_correct"] == 1
-    assert r["settlement_usd"] == pytest.approx(1.0)
-    assert r["pnl_usd"] == pytest.approx(0.12)
-
-
-def test_one_position_per_asset(fresh_db, env_demo, cfg, monkeypatch):
-    monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
+    _capture_orders(monkeypatch)
 
     async def _open(_ticker):
         return {"yes_bid_dollars": 0.85, "yes_ask_dollars": 0.87, "status": "open", "result": ""}
     monkeypatch.setattr(kalshi_api, "fetch_market", _open)
 
-    run_async(ct.run_tick(cfg, authed=False))
-    run_async(ct.run_tick(cfg, authed=False))
+    run_async(ct.run_tick(cfg, authed=True))
+    run_async(ct.run_tick(cfg, authed=True))
     with db.get_db() as conn:
-        assert db.count_open_crypto15m(conn, "demo") == 1
+        assert db.count_open_crypto15m(conn, "production") == 1
 
 
-def test_contrarian_mode_buys_the_underdog(fresh_db, env_demo, cfg, monkeypatch):
+def test_contrarian_mode_buys_the_underdog(fresh_db, env_prod, cfg, monkeypatch):
+    _live_cfg(cfg)
     cfg["crypto15m_direction_mode"] = "contrarian"
     monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset(favorite="up")]))
-    run_async(ct.run_tick(cfg, authed=False))
+    _capture_orders(monkeypatch)
+    run_async(ct.run_tick(cfg, authed=True))
     with db.get_db() as conn:
-        r = db.get_open_crypto15m(conn, "demo")[0]
+        r = db.get_open_crypto15m(conn, "production")[0]
     assert r["side"] == "down"
     assert r["direction"] == "no"
     assert r["entry_limit_cents"] == 16
@@ -246,7 +222,6 @@ def _capture_orders(monkeypatch):
 def test_live_gate_is_independent_of_main_bot(fresh_db, env_prod, cfg, monkeypatch):
     cfg["crypto15m_live"] = True
     cfg["enable_trading"] = False
-    cfg["dry_run"] = True
     monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
     calls = _capture_orders(monkeypatch)
 
@@ -264,7 +239,6 @@ def test_live_gate_is_independent_of_main_bot(fresh_db, env_prod, cfg, monkeypat
 def test_main_bot_live_does_not_arm_15m(fresh_db, env_demo, cfg, monkeypatch):
     cfg["crypto15m_live"] = False
     cfg["enable_trading"] = True
-    cfg["dry_run"] = False
     monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
     calls = _capture_orders(monkeypatch)
 
@@ -272,11 +246,10 @@ def test_main_bot_live_does_not_arm_15m(fresh_db, env_demo, cfg, monkeypatch):
 
     assert calls == []
     with db.get_db() as conn:
-        r = db.get_open_crypto15m(conn, "demo")[0]
-    assert r["dry_run"] == 1
+        assert db.count_open_crypto15m(conn, "demo") == 0
 
 
-def test_live_armed_without_auth_paper_trades(fresh_db, env_demo, cfg, monkeypatch):
+def test_live_armed_without_auth_does_not_trade(fresh_db, env_demo, cfg, monkeypatch):
     cfg["crypto15m_live"] = True
     monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
     calls = _capture_orders(monkeypatch)
@@ -285,11 +258,10 @@ def test_live_armed_without_auth_paper_trades(fresh_db, env_demo, cfg, monkeypat
 
     assert calls == []
     with db.get_db() as conn:
-        r = db.get_open_crypto15m(conn, "demo")[0]
-    assert r["dry_run"] == 1
+        assert db.count_open_crypto15m(conn, "demo") == 0
 
 
-def test_demo_forces_paper_even_when_live_armed(fresh_db, env_demo, cfg, monkeypatch):
+def test_demo_never_trades_even_when_live_armed(fresh_db, env_demo, cfg, monkeypatch):
     async def _bal(_cfg, force=False):
         return 10_000, 0
     monkeypatch.setattr(trader, "refresh_balance", _bal)
@@ -301,8 +273,7 @@ def test_demo_forces_paper_even_when_live_armed(fresh_db, env_demo, cfg, monkeyp
 
     assert calls == []
     with db.get_db() as conn:
-        r = db.get_open_crypto15m(conn, "demo")[0]
-    assert r["dry_run"] == 1
+        assert db.count_open_crypto15m(conn, "demo") == 0
 
     st = run_async(ct.status(cfg, authed=True))
     assert st["liveSupported"] is False
@@ -355,14 +326,11 @@ def test_failed_entry_resolves_immediately_and_blocks_retry(fresh_db, env_prod, 
 
 
 def test_exiting_position_settles_when_sell_never_fills(fresh_db, env_demo, cfg, monkeypatch):
-    monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
-    run_async(ct.run_tick(cfg, authed=False))
-    with db.get_db() as conn:
-        pid = db.get_open_crypto15m(conn, "demo")[0]["id"]
-        db.update_crypto15m_position(
-            conn, pid, status="exiting", exit_reason="stop_loss",
-            exit_kalshi_order_id="ord-x1",
-        )
+    pos = _seed_c15(status="exiting", direction="yes", target_contracts=1,
+                    filled_contracts=1, cost_usd=0.88, exit_reason="stop_loss",
+                    exit_kalshi_order_id="ord-x1", exit_filled_contracts=0,
+                    close_time=_future())
+    pid = pos["id"]
 
     canceled = []
 
@@ -416,55 +384,6 @@ def test_maker_limit_cents_joins_the_bid():
     assert ct.maker_limit_cents("down", 0.85, 0.87, 0.15) == 13
     assert ct.maker_limit_cents("up", None, None, 0.87) == 86
     assert ct.maker_limit_cents("up", None, None, 0.01) == 1
-
-
-def test_paper_maker_entry_rests_then_fills_when_traded_through(fresh_db, env_demo, cfg, monkeypatch):
-    cfg["crypto15m_entry_style"] = "maker"
-    monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
-    run_async(ct.run_tick(cfg, authed=False))
-
-    with db.get_db() as conn:
-        r = db.get_open_crypto15m(conn, "demo")[0]
-    assert r["status"] == "submitted"
-    assert r["dry_run"] == 1
-    assert r["entry_limit_cents"] == 85
-    assert r["filled_contracts"] == 0
-
-    async def _above(_ticker):
-        return {"yes_bid_dollars": 0.86, "yes_ask_dollars": 0.88, "status": "open", "result": ""}
-    monkeypatch.setattr(kalshi_api, "fetch_market", _above)
-    run_async(ct.run_tick(cfg, authed=False))
-    with db.get_db() as conn:
-        r = db.get_open_crypto15m(conn, "demo")[0]
-    assert r["status"] == "submitted"
-
-    async def _through(_ticker):
-        return {"yes_bid_dollars": 0.83, "yes_ask_dollars": 0.85, "status": "open", "result": ""}
-    monkeypatch.setattr(kalshi_api, "fetch_market", _through)
-    run_async(ct.run_tick(cfg, authed=False))
-    with db.get_db() as conn:
-        r = db.get_open_crypto15m(conn, "demo")[0]
-    assert r["status"] == "filled"
-    assert r["filled_contracts"] == 1
-    assert r["avg_entry_cents"] == pytest.approx(85.0)
-    assert r["cost_usd"] == pytest.approx(0.85)
-
-
-def test_paper_maker_entry_cancels_inside_cancel_lead(fresh_db, env_demo, cfg, monkeypatch):
-    cfg["crypto15m_entry_style"] = "maker"
-    cfg["crypto15m_maker_cancel_min"] = 15.0
-    monkeypatch.setattr(crypto15m, "snapshot", _stub_snapshot([signal_asset()]))
-    run_async(ct.run_tick(cfg, authed=False))
-
-    async def _above(_ticker):
-        return {"yes_bid_dollars": 0.86, "yes_ask_dollars": 0.88, "status": "open", "result": ""}
-    monkeypatch.setattr(kalshi_api, "fetch_market", _above)
-    run_async(ct.run_tick(cfg, authed=False))
-    with db.get_db() as conn:
-        r = dict(conn.execute("SELECT * FROM crypto15m_positions WHERE asset='BTC'").fetchone())
-    assert r["resolved"] == 1
-    assert r["status"] == "canceled"
-    assert r["exit_reason"] == "unfilled_expired"
 
 
 def test_live_maker_entry_places_resting_order_at_bid(fresh_db, env_prod, cfg, monkeypatch):

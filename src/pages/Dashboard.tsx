@@ -5,6 +5,7 @@ import type { PnlPoint } from '@shared/types';
 import { useApp } from '../state/AppStateProvider';
 import { Card, Empty, Page, ShareableStat, StatCard } from '../components/common';
 import { cls, fmtPct, fmtRelative, fmtUsd } from '../utils/format';
+import { computeTradeWarnings } from '../utils/warnings';
 import type { PageId } from '../App';
 
 interface DashboardProps {
@@ -71,9 +72,9 @@ export function DashboardPage({ onNav }: DashboardProps) {
       tone: 'warn',
     });
   }
-  if (config?.dryRun) {
+  if (config && config.enableTrading && config.kalshiEnv !== 'production') {
     issues.push({
-      label: 'Dry-run mode is on — real orders will not be placed',
+      label: 'Running on the Demo environment — orders use Kalshi demo funds, not real money',
       tone: 'warn',
     });
   }
@@ -81,6 +82,13 @@ export function DashboardPage({ onNav }: DashboardProps) {
     issues.push({
       label: `Backend is ${backend.status}${backend.lastError ? ` — ${backend.lastError}` : ''}`,
       tone: 'bad',
+    });
+  }
+  for (const tw of computeTradeWarnings(config, account)) {
+    issues.push({
+      label: tw.message,
+      tone: tw.severity === 'block' ? 'bad' : 'warn',
+      cta: tw.page ? { label: tw.fixLabel ?? 'Fix', page: tw.page } : undefined,
     });
   }
   if (issues.length === 0) {
